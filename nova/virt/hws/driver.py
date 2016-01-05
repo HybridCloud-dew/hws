@@ -56,7 +56,11 @@ hws_opts = [
     cfg.StrOpt('subnet_id',
                help='subnet_id'),
     cfg.StrOpt('image_id',
-               help='image_id')
+               help='image_id'),
+    cfg.StrOpt('gong_yao',
+               help='gong yao'),
+    cfg.StrOpt('si_yao',
+               help='si yao')
     ]
 
 CONF = cfg.CONF
@@ -68,12 +72,12 @@ class HwsComputeDriver(driver.ComputeDriver):
     def __init__(self, virtapi):
         super(HwsComputeDriver, self).__init__(virtapi)
         # self.nova_client = NovaService()
-        ak = 'XI9ATQZEY8E0BYVWZFCU'
-        sk = "9WLbxZNSOHm9kVOO3aWuKYHjzcmeIDZ2QqndwD94"
+        gong_yao = CONF.hws.gong_yao
+        si_yao = CONF.hws.si_yao
         region = "cn-north-1"
         protocol = "https"
         port = "443"
-        self.hws_client = HWSClient(ak, sk, region, protocol, port)
+        self.hws_client = HWSClient(gong_yao, si_yao, region, protocol, port)
         self.db_manager = DatabaseManager()
 
     def _transfer_to_host_server_name(self, instance_uuid):

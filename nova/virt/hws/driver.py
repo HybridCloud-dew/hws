@@ -1,13 +1,22 @@
 import socket
 import traceback
+import json
+import random
+import string
 
 from nova.virt import driver
-from nova.virt.hws.reference_service import NovaService
+# from nova.virt.hws.reference_service import NovaService
 from nova.openstack.common import jsonutils
 from nova.compute import power_state
 from nova import exception
 from nova.openstack.common import loopingcall
-import log
+from nova.openstack.common import log as logging
+
+from nova.virt.hws.hws_service.client import HWSClient
+from nova.virt.hws.database_manager import DatabaseManager
+from oslo.config import cfg
+
+LOG = logging.getLogger(__name__)
 
 VIR_DOMAIN_NOSTATE = 0
 VIR_DOMAIN_RUNNING = 1
@@ -37,11 +46,35 @@ LIBVIRT_POWER_STATE = {
     VIR_DOMAIN_PMSUSPENDED: power_state.SUSPENDED,
 }
 
+hws_opts = [
+    cfg.StrOpt('project_id',
+               help='project_id'),
+    cfg.StrOpt('flavor_id',
+               help='flavor id'),
+    cfg.StrOpt('vpc_id',
+               help='vpc_id'),
+    cfg.StrOpt('subnet_id',
+               help='subnet_id'),
+    cfg.StrOpt('image_id',
+               help='image_id')
+    ]
+
+CONF = cfg.CONF
+hws_group = 'hws'
+CONF.register_opts(hws_opts, hws_group)
+
 class HwsComputeDriver(driver.ComputeDriver):
 
     def __init__(self, virtapi):
         super(HwsComputeDriver, self).__init__(virtapi)
-        self.nova_client = NovaService()
+        # self.nova_client = NovaService()
+        ak = 'XI9ATQZEY8E0BYVWZFCU'
+        sk = "9WLbxZNSOHm9kVOO3aWuKYHjzcmeIDZ2QqndwD94"
+        region = "cn-north-1"
+        protocol = "https"
+        port = "443"
+        self.hws_client = HWSClient(ak, sk, region, protocol, port)
+        self.db_manager = DatabaseManager()
 
     def _transfer_to_host_server_name(self, instance_uuid):
         """
@@ -181,30 +214,84 @@ class HwsComputeDriver(driver.ComputeDriver):
         :param block_device_info: Information about block devices to be
                                   attached to the instance.
         """
-        flavor = '1'
-        image_id = '1634ad05-c993-49bb-a9d4-175bfb4d5989'
-        az = 'az41.hws--fusionsphere'
-        net_id = 'ecc1e2bf-e1e7-439f-b10b-213c0ebcc51e'
-        nics = [{'net-id': net_id}]
-        server_name = self._transfer_to_host_server_name(instance.uuid)
+
+        flavor = CONF.hws.flavor_id
+        LOG.info('FLAVOR: %s' % flavor)
+        image_id = CONF.hws.image_id
+        vpc_id = CONF.hws.vpc_id
+        subnet_id = CONF.hws.subnet_id
+        subnet_id_list = [subnet_id]
+        server_name = self._get_display_name(instance)
+        # project_id = instance.project_id
+        project_id = CONF.hws.project_id
+        root_volume_type = "SATA"
+        az = 'cn-north-1a'
         try:
-            server = self.nova_client.create(server_name, image_id, flavor, availability_zone=az, nics=nics)
+            created_job = self.hws_client.ecs.create_server(project_id, image_id, flavor,
+                                                            server_name, vpc_id, subnet_id_list, root_volume_type,
+                                                            availability_zone=az)
+            job_status = created_job["status"]
+
+            if job_status != 200:
+                job_info = json.dumps(created_job)
+                error_info = 'HWS Create Server Error, EXCEPTION: %s' % created_job
+                raise Exception(error_info)
+
         except Exception:
             raise exception.VirtualInterfaceCreateException(traceback.format_exc())
 
+        job_id = created_job['body']['job_id']
+
         def _wait_for_boot():
             """Called at an interval until the VM is running."""
-            server_get = self.nova_client.list(search_opts={'id' : server.id})
-            if server_get and len(server_get) == 1:
-                state = server_get[0]._info['OS-EXT-STS:power_state']
-                status = server_get[0].status
-
-                if state == int(str(power_state.RUNNING), 16):
-                    log.info("Instance spawned successfully.")
+            job_current_info = self.hws_client.ecs.get_job_detail(project_id, job_id)
+            if job_current_info and job_current_info['status'] == 200:
+                job_status_ac = job_current_info['body']['status']
+                if job_status_ac == 'SUCCESS':
+                    server_id = job_current_info['body']['entities']['sub_jobs'][0]["entities"]['server_id']
+                    LOG.info('Add hws server id: %s' % server_id)
+                    if server_id:
+                        LOG.info('HWS add server id mapping, cascading id: %s, cascaded id: %s' %
+                                 (instance.uuid, server_id))
+                        self.db_manager.add_server_id_mapping(instance.uuid, server_id)
+                    else:
+                        error_info = 'No server id found for cascading id: %s, server: %s' % (instance.uuid, server_name)
+                        LOG.error(error_info)
+                        raise Exception('HWS Create Server Error, EXCEPTION: %s' % error_info)
                     raise loopingcall.LoopingCallDone()
+                elif job_status_ac == 'FAIL':
+                    error_info = json.dumps(job_current_info)
+                    LOG.error('HWS Create Server Error, EXCEPTION: %s' % error_info)
+                    raise Exception(error_info)
+                elif job_status_ac == "RUNNING":
+                    LOG.debug('Job for creating server: %s is still RUNNING.' % server_name)
+                    pass
+                else:
+                    raise Exception(job_current_info)
+            elif job_current_info and job_current_info['status'] == 'error':
+                pass
+            elif not job_current_info:
+                pass
+            else:
+                error_info = json.dumps(job_current_info)
+                # log.error('HWS Create Server Error, EXCEPTION: %s' % error_info)
+                raise Exception(error_info)
 
         timer = loopingcall.FixedIntervalLoopingCall(_wait_for_boot)
-        timer.start(interval=0.5).wait()
+        timer.start(interval=5).wait()
+
+    def _get_display_name(self, instance):
+        original_display_name = instance.display_name
+        display_name = ""
+        if len(original_display_name) < 64:
+            display_name = original_display_name
+        else:
+            display_name = self._get_random_name(8)
+
+        return display_name
+
+    def _get_random_name(self, lenth):
+        return ''.join(random.sample(string.ascii_letters + string.digits, lenth))
 
     def attach_volume(self, context, connection_info, instance, mountpoint,
                     disk_bus=None, device_type=None, encryption=None):
@@ -213,10 +300,17 @@ class HwsComputeDriver(driver.ComputeDriver):
     def destroy(self, context, instance, network_info, block_device_info=None,
                 destroy_disks=True, migrate_data=None):
         try:
-            server_name = self._transfer_to_host_server_name(instance.uuid)
-            servers = self.nova_client.list(search_opts={'name': server_name})
-            if servers and len(servers) == 1:
-                self.nova_client.delete(servers[0])
+            cascading_server_id = instance.uuid
+            cascaded_server_id = self.db_manager.get_cascaded_server_id(cascading_server_id)
+            if cascaded_server_id:
+                project_id = CONF.hws.project_id
+                delete_server_list = []
+                delete_server_list.append(cascaded_server_id)
+                delete_result = self.hws_client.ecs.delete_server(project_id, delete_server_list, True, True)
+            else:
+                error_info = "cascaded server is not exsit for cascading id: %s" % cascading_server_id
+                LOG.error(error_info)
+                raise exception.NovaException(error_info)
         except Exception:
             raise exception.NovaException(traceback.format_exc())
 
@@ -281,18 +375,18 @@ class HwsComputeDriver(driver.ComputeDriver):
                }
 
     def get_info(self, instance):
-        STATUS = power_state.NOSTATE
-
-        try:
-            server_name = self._transfer_to_host_server_name(instance.uuid)
-            servers = self.nova_client.list(search_opts={'name':server_name})
-
-            if servers and len(servers) == 1:
-                STATUS = servers[0]._info['OS-EXT-STS:power_state']
-        except Exception:
-            msg = traceback.format_exc()
-            raise exception.NovaException(msg)
-
+        # STATUS = power_state.NOSTATE
+        #
+        # try:
+        #     server_name = self._transfer_to_host_server_name(instance.uuid)
+        #     servers = self.nova_client.list(search_opts={'name':server_name})
+        #
+        #     if servers and len(servers) == 1:
+        #         STATUS = servers[0]._info['OS-EXT-STS:power_state']
+        # except Exception:
+        #     msg = traceback.format_exc()
+        #     raise exception.NovaException(msg)
+        STATUS = 1
         return {'state': STATUS,
                 'max_mem': 0,
                 'mem': 0,
@@ -316,10 +410,10 @@ class HwsComputeDriver(driver.ComputeDriver):
     def list_instances(self):
         """List VM instances from all nodes."""
         instances = []
-        servers = self.nova_client.list()
-        for server in servers:
-            instance_id = server.name.split('@', 1)[1]
-            instances.append(instance_id)
+        # servers = self.nova_client.list()
+        # for server in servers:
+        #     instance_id = server.name.split('@', 1)[1]
+        #     instances.append(instance_id)
 
         return instances
 

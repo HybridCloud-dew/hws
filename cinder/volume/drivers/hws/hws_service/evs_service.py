@@ -2,7 +2,7 @@ __author__ = 'Administrator'
 
 import json
 
-from nova.virt.hws.hws_service import HWSService
+from cinder.volume.drivers.hws.hws_service import HWSService
 
 class EVSService(HWSService):
     def __init__(self, ak, sk, region, protocol, host, port):
@@ -48,6 +48,55 @@ class EVSService(HWSService):
                 "code": "XXX"
             }
         }
+        Get job detail result:
+        {
+            u'body': {
+                u'status': u'RUNNING',
+                u'fail_reason': None,
+                u'job_id': u'8aace0c651b0a02301521ae1f96c6138',
+                u'job_type': u'createVolume',
+                u'entities': {
+                    u'volume_id': u'9bd6fa88-0e60-48e5-ae61-7e028dbdf045'
+                },
+                u'end_time': u'',
+                u'begin_time': u'2016-01-07T06: 59: 23.115Z',
+                u'error_code': None
+            },
+            u'status': 200
+        }
+        {
+            u'body': {
+                u'status': u'SUCCESS',
+                u'fail_reason': None,
+                u'job_id': u'8aace0c651b0a02301521ae1f96c6138',
+                u'job_type': u'createVolume',
+                u'entities': {
+                    u'volume_id': u'9bd6fa88-0e60-48e5-ae61-7e028dbdf045'
+                },
+                u'end_time': u'2016-01-07T06: 59: 48.279Z',
+                u'begin_time': u'2016-01-07T06: 59: 23.115Z',
+                u'error_code': None
+            },
+            u'status': 200
+        }
+
+        Failed job result:
+        {
+            u'body': {
+                u'status': u'FAIL',
+                u'fail_reason': u"EbsCreateVolumeTask-fail:badRequest: Invalid input received: Availability zone 'cn-north-1' is invalid",
+                u'job_id': u'8aace0c651b0a02301521ab7e58660ca',
+                u'job_type': u'createVolume',
+                u'entities': {
+
+                },
+                u'end_time': u'2016-01-07T06: 13: 25.809Z',
+                u'begin_time': u'2016-01-07T06: 13: 25.509Z',
+                u'error_code': u'EVS.5400'
+            },
+            u'status': 200
+        }
+
         """
         uri = '/v2/%s/cloudvolumes' % project_id
         request_body_dict = {}
@@ -88,4 +137,6 @@ class EVSService(HWSService):
         response = self.delete(uri)
 
         return json.loads(response)
+
+
 

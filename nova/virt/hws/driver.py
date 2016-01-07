@@ -273,7 +273,10 @@ class HwsComputeDriver(driver.ComputeDriver):
                 else:
                     raise Exception(job_current_info)
             elif job_current_info and job_current_info['status'] == 'error':
-                pass
+                try:
+                    self._deal_java_error(job_current_info)
+                except Exception, e:
+                    pass
             elif not job_current_info:
                 pass
             else:
@@ -308,15 +311,61 @@ class HwsComputeDriver(driver.ComputeDriver):
             cascaded_server_id = self.db_manager.get_cascaded_server_id(cascading_server_id)
             if cascaded_server_id:
                 project_id = CONF.hws.project_id
+                cascaded_server_detail = self.hws_client.ecs.get_detail(project_id, cascaded_server_id)
+                #{u'body': {u'itemNotFound': {u'message': u'Instance could not be found', u'code': 404}}, u'status': 404}
+                if cascaded_server_detail['status'] == 404:
+                    LOG.info('cascaded server is not exist in HWS, so return Delete Server SUCCESS.')
+                    return
+
                 delete_server_list = []
                 delete_server_list.append(cascaded_server_id)
-                delete_result = self.hws_client.ecs.delete_server(project_id, delete_server_list, True, True)
+                delete_job_result = self.hws_client.ecs.delete_server(project_id, delete_server_list, True, True)
+                self._deal_java_error(delete_job_result)
             else:
-                error_info = "cascaded server is not exsit for cascading id: %s" % cascading_server_id
-                LOG.error(error_info)
-                raise exception.NovaException(error_info)
+                # if there is no mapped cascaded server id, means there is no cascaded server
+                # then we can directly return server deleted success.
+                execute_info = "cascaded server is not exist for cascading id: , return delete success.%s" % cascading_server_id
+                LOG.info(execute_info)
+
+                return
         except Exception:
             raise exception.NovaException(traceback.format_exc())
+        delete_job_id = delete_job_result['body']['job_id']
+
+        def _wait_for_destroy():
+            job_current_info = self.hws_client.ecs.get_job_detail(project_id, delete_job_id)
+            if job_current_info and job_current_info['status'] == 200:
+                job_status_ac = job_current_info['body']['status']
+                if job_status_ac == 'SUCCESS':
+                    self.db_manager.delet_server_id_by_cascading_id(cascading_server_id)
+                    raise loopingcall.LoopingCallDone()
+                elif job_status_ac == 'FAIL':
+                    error_info = json.dumps(job_current_info)
+                    LOG.error('HWS Delete Server Error, EXCEPTION: %s' % error_info)
+                    raise Exception(error_info)
+                elif job_status_ac == "RUNNING":
+                    LOG.debug('Job for delete server: %s is still RUNNING.' % cascading_server_id)
+                    pass
+                else:
+                    raise Exception(job_current_info)
+            elif job_current_info and job_current_info['status'] == 'error':
+                try:
+                    self._deal_java_error(job_current_info)
+                except Exception, e:
+                    # if it is java gateway error, we will always wait for it success.
+                    # it maybe network disconnect error or others issue.
+                    LOG.info('Java gateway issue, go on to wait for deleting server success.')
+                    pass
+            elif not job_current_info:
+                pass
+            else:
+                error_info = json.dumps(job_current_info)
+                LOG.error('HWS Delete Server Error, EXCEPTION: %s' % error_info)
+                raise Exception(error_info)
+
+        timer = loopingcall.FixedIntervalLoopingCall(_wait_for_destroy)
+        timer.start(interval=5).wait()
+
 
     def detach_volume(self, connection_info, instance, mountpoint,
                       encryption=None):
@@ -414,19 +463,52 @@ class HwsComputeDriver(driver.ComputeDriver):
     def list_instances(self):
         """List VM instances from all nodes."""
         instances = []
-        # servers = self.nova_client.list()
-        # for server in servers:
-        #     instance_id = server.name.split('@', 1)[1]
-        #     instances.append(instance_id)
+        project_id = CONF.hws.project_id
+        list_result = self.hws_client.ecs.list(project_id)
+        servers = list_result['body']['servers']
+        for server in servers:
+            server_id = server['id']
+            instances.append(server_id)
 
         return instances
 
     def power_off(self, instance, timeout=0, retry_interval=0):
-        pass
+        project_id = CONF.hws.project_id
+        cascaded_server_id = self._get_cascaded_server_id(instance)
+        if cascaded_server_id:
+            stop_result = self.hws_client.ecs.stop_server(project_id, cascaded_server_id)
+            self._deal_java_error(stop_result)
+            LOG.info('Stop Server: %s, result is: %s' % (instance.display_name, stop_result))
+        else:
+            error_info = 'cascaded server id is not exist for cascading server: %s.' % instance.display_name
+            LOG.error(error_info)
+            raise Exception(error_info)
 
     def power_on(self, context, instance, network_info,
                  block_device_info=None):
-        pass
+        project_id = CONF.hws.project_id
+        cascaded_server_id = self._get_cascaded_server_id(instance)
+        if cascaded_server_id:
+            start_result = self.hws_client.ecs.start_server(project_id, cascaded_server_id)
+            self._deal_java_error(start_result)
+            LOG.info('Start Server: %s, result is: %s' % (instance.display_name, start_result))
+        else:
+            error_info = 'cascaded server id is not exist for cascading server: %s.' % instance.display_name
+            LOG.error(error_info)
+            raise Exception(error_info)
+
+    def reboot(self, context, instance, network_info, reboot_type,
+               block_device_info=None, bad_volumes_callback=None):
+        project_id = CONF.hws.project_id
+        cascaded_server_id = self._get_cascaded_server_id(instance)
+        if cascaded_server_id:
+            reboot_result = self.hws_client.ecs.reboot_hard(project_id, cascaded_server_id)
+            self._deal_java_error(reboot_result)
+            LOG.info('Start Server: %s, result is: %s' % (instance.display_name, reboot_result))
+        else:
+            error_info = 'cascaded server id is not exist for cascading server: %s.' % instance.display_name
+            LOG.error(error_info)
+            raise Exception(error_info)
 
     def resume_state_on_host_boot(self, context, instance, network_info,
                                   block_device_info=None):
@@ -434,3 +516,31 @@ class HwsComputeDriver(driver.ComputeDriver):
 
     def snapshot(self, context, instance, image_id, update_task_state):
         pass
+
+    def _get_cascaded_server_id(self, instance):
+        cascading_server_id = instance.uuid
+        cascaded_server_id = self.db_manager.get_cascaded_server_id(cascading_server_id)
+
+        return cascaded_server_id
+
+    def _deal_java_error(self, java_response):
+        """
+        {
+          'status': 'error',
+          'body': {
+            'message': '<MESSAGE>',
+            'exception': '<EXCEPTION>'
+          }
+        }
+        :param java_response: dict
+        :return:
+        """
+        if 'error' == java_response['status']:
+            error_message = java_response['body']['message']
+            exception = java_response['body']['exception']
+            LOG.error('Java error message: %s, exception: %s' % (error_message, exception))
+            raise Exception(exception)
+        if 200 != java_response['status']:
+            error_info = json.dumps(java_response)
+            LOG.error(error_info)
+            raise Exception(error_info)

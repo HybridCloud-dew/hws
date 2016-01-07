@@ -3,7 +3,7 @@ __author__ = 'Administrator'
 from urlparse import urljoin
 import json
 
-from nova.virt.hws.java_gateway import HWSRestMethod
+from cinder.volume.drivers.hws.java_gateway import HWSRestMethod
 
 class HWSService(object):
     def __init__(self, ak, sk, service_name, region, protocol, host, port):

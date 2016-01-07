@@ -2,8 +2,9 @@ __author__ = 'Administrator'
 
 import json
 
-from nova.virt.hws.hws_service import HWSService
+from cinder.volume.drivers.hws.hws_service import HWSService
 
+# import log
 
 class ECSService(HWSService):
     def __init__(self, ak, sk, region, protocol, host, port):

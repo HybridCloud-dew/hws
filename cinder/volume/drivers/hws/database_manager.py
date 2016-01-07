@@ -2,9 +2,10 @@ __author__ = 'Administrator'
 
 import sqlite3
 import sys
-import traceback
 import os
-from nova.openstack.common import log as logging
+
+
+from cinder.openstack.common import log as logging
 LOG = logging.getLogger(__name__)
 
 
@@ -19,6 +20,12 @@ class DatabaseManager(object):
             '''CREATE TABLE server_id_mapping(cascading_server_id text, cascaded_server_id text)'''
         self.INSERT_SERVER_ID_MAPPING = \
             '''INSERT INTO server_id_mapping(cascading_server_id, cascaded_server_id) VALUES (?,?)'''
+
+        self.CREATE_TABLE_VOLUME_MAPPING = \
+            '''CREATE TABLE volume_mapping(cascading_volume_id text, cascaded_volume_id text)'''
+
+        self.INSERT_VOLUME_MAPPING = \
+            '''INSERT INTO volume_mapping(cascading_volume_id, cascaded_volume_id) VALUES (?, ?)'''
 
         db_full_name = self.get_hws_gateway_db_full_name()
         if not os.path.isfile(db_full_name):
@@ -52,6 +59,7 @@ class DatabaseManager(object):
     def init_database(self):
         cursor = self.connect().cursor()
         cursor.execute(self.CREATE_TABLE_SERVER_ID_MAPPING)
+        cursor.execute(self.CREATE_TABLE_VOLUME_MAPPING)
         self.commit()
 
     def add_server_id_mapping(self, cascading_server_id, cascaded_server_id):
@@ -60,10 +68,34 @@ class DatabaseManager(object):
         cursor.execute(exe_sql, (cascading_server_id, cascaded_server_id))
         self.commit()
 
-    def delet_server_id_by_cascading_id(self, cascading_server_id):
+    def delete_server_id_by_cascading_id(self, cascading_server_id):
         cursor = self.connect().cursor()
         exe_sql = "DELETE FROM server_id_mapping WHERE cascading_server_id = ?"
         data = [cascading_server_id]
+        cursor.execute(exe_sql, data)
+        self.commit()
+
+    def add_volume_mapping(self, cascading_volume_id, cascaded_volume_id):
+        cursor = self.connect().cursor()
+        exe_sql = self.INSERT_VOLUME_MAPPING
+        cursor.execute(exe_sql, (cascading_volume_id, cascaded_volume_id))
+        self.commit()
+
+    def get_cascaded_volume_id(self, cascading_volume_id):
+        cursor = self.connect().cursor()
+        cursor.execute("SELECT cascaded_volume_id FROM volume_mapping "
+                       "WHERE cascading_volume_id = '%s'"
+                                 % cascading_volume_id)
+        row = cursor.fetchone()
+        if row:
+            return str(row[0])
+
+        return None
+
+    def delete_volume_mapping(self, cascading_volume_id):
+        cursor = self.connect().cursor()
+        exe_sql = "DELETE FROM volume_mapping WHERE cascading_volume_id = ?"
+        data = [cascading_volume_id]
         cursor.execute(exe_sql, data)
         self.commit()
 
@@ -94,7 +126,7 @@ if __name__ == '__main__':
 
         cascaded_server_id = database_manager.get_cascaded_server_id(cascading_server_id)
         print cascaded_server_id
-        database_manager.delet_server_id_by_cascading_id(cascading_server_id)
+        database_manager.delete_server_id_by_cascading_id(cascading_server_id)
         cascaded_server_id = database_manager.get_cascaded_server_id(cascading_server_id)
         print cascaded_server_id
         database_manager.close()

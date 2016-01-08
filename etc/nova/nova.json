@@ -6,7 +6,8 @@
             "image_id": "<IMAGE_ID>",
             "vpc_id": "<VPC_ID>",
             "subnet_id": "<SUBNET_ID>",
-            "region": "<REGION>",
+            "service_region": "<REGION>",
+            "resource_region": "<REGION>",
             "gong_yao": "<AK>",
             "si_yao": "<SK>"
         }

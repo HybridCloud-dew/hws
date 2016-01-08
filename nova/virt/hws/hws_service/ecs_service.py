@@ -200,10 +200,7 @@ class ECSService(HWSService):
 
 
         request_body_dict['server'] = request_server_body
-        print request_body_dict
         request_body_string = json.dumps(request_body_dict)
-        print request_body_string
-        print uri
         response = self.post(uri, request_body_string)
 
         # log.debug('create server of hws uri: %s, request_body_string: %s, response: %s' %
@@ -280,11 +277,15 @@ class ECSService(HWSService):
 
     def stop_server(self, project_id, server_id):
         uri = '/v1/%s/servers/%s/action' % (project_id, server_id)
-        request_body_dict = {"os-stop": {}}
+        request_body_dict = {}
+        request_body_dict['os-stop'] = {}
         request_body_string = json.dumps(request_body_dict)
         response = self.post(uri, request_body_string)
 
         return json.loads(response)
+
+    def stop_servers(self, project_id, servers_list):
+        pass
 
 
     def start_server(self, project_id, server_id):

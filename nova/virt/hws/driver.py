@@ -18,32 +18,24 @@ from oslo.config import cfg
 
 LOG = logging.getLogger(__name__)
 
-VIR_DOMAIN_NOSTATE = 0
-VIR_DOMAIN_RUNNING = 1
-VIR_DOMAIN_BLOCKED = 2
-VIR_DOMAIN_PAUSED = 3
-VIR_DOMAIN_SHUTDOWN = 4
-VIR_DOMAIN_SHUTOFF = 5
-VIR_DOMAIN_CRASHED = 6
-VIR_DOMAIN_PMSUSPENDED = 7
+HWS_DOMAIN_NOSTATE = 0
+HWS_DOMAIN_RUNNING = 1
+HWS_DOMAIN_BLOCKED = 2
+HWS_DOMAIN_PAUSED = 3
+HWS_DOMAIN_SHUTDOWN = 4
+HWS_DOMAIN_SHUTOFF = 5
+HWS_DOMAIN_CRASHED = 6
+HWS_DOMAIN_PMSUSPENDED = 7
 
-LIBVIRT_POWER_STATE = {
-    VIR_DOMAIN_NOSTATE: power_state.NOSTATE,
-    VIR_DOMAIN_RUNNING: power_state.RUNNING,
-    # NOTE(maoy): The DOMAIN_BLOCKED state is only valid in Xen.
-    # It means that the VM is running and the vCPU is idle. So,
-    # we map it to RUNNING
-    VIR_DOMAIN_BLOCKED: power_state.RUNNING,
-    VIR_DOMAIN_PAUSED: power_state.PAUSED,
-    # NOTE(maoy): The libvirt API doc says that DOMAIN_SHUTDOWN
-    # means the domain is being shut down. So technically the domain
-    # is still running. SHUTOFF is the real powered off state.
-    # But we will map both to SHUTDOWN anyway.
-    # http://libvirt.org/html/libvirt-libvirt.html
-    VIR_DOMAIN_SHUTDOWN: power_state.SHUTDOWN,
-    VIR_DOMAIN_SHUTOFF: power_state.SHUTDOWN,
-    VIR_DOMAIN_CRASHED: power_state.CRASHED,
-    VIR_DOMAIN_PMSUSPENDED: power_state.SUSPENDED,
+HWS_POWER_STATE = {
+    HWS_DOMAIN_NOSTATE: power_state.NOSTATE,
+    HWS_DOMAIN_RUNNING: power_state.RUNNING,
+    HWS_DOMAIN_BLOCKED: power_state.RUNNING,
+    HWS_DOMAIN_PAUSED: power_state.PAUSED,
+    HWS_DOMAIN_SHUTDOWN: power_state.SHUTDOWN,
+    HWS_DOMAIN_SHUTOFF: power_state.SHUTDOWN,
+    HWS_DOMAIN_CRASHED: power_state.CRASHED,
+    HWS_DOMAIN_PMSUSPENDED: power_state.SUSPENDED,
 }
 
 hws_opts = [
@@ -60,7 +52,9 @@ hws_opts = [
     cfg.StrOpt('gong_yao',
                help='gong yao'),
     cfg.StrOpt('si_yao',
-               help='si yao')
+               help='si yao'),
+    cfg.StrOpt('service_region', help='service region'),
+    cfg.StrOpt('resource_region', help='resource_region')
     ]
 
 CONF = cfg.CONF
@@ -74,9 +68,10 @@ class HwsComputeDriver(driver.ComputeDriver):
         # self.nova_client = NovaService()
         gong_yao = CONF.hws.gong_yao
         si_yao = CONF.hws.si_yao
-        region = "cn-north-1"
+        region = CONF.hws.service_region
         protocol = "https"
         port = "443"
+        self.project = CONF.hws.project_id
         self.hws_client = HWSClient(gong_yao, si_yao, region, protocol, port)
         self.db_manager = DatabaseManager()
 
@@ -229,7 +224,7 @@ class HwsComputeDriver(driver.ComputeDriver):
         # project_id = instance.project_id
         project_id = CONF.hws.project_id
         root_volume_type = "SATA"
-        az = 'cn-north-1a'
+        az = CONF.hws.resource_region
         try:
             created_job = self.hws_client.ecs.create_server(project_id, image_id, flavor,
                                                             server_name, vpc_id, subnet_id_list, root_volume_type,
@@ -258,6 +253,7 @@ class HwsComputeDriver(driver.ComputeDriver):
                         LOG.info('HWS add server id mapping, cascading id: %s, cascaded id: %s' %
                                  (instance.uuid, server_id))
                         self.db_manager.add_server_id_mapping(instance.uuid, server_id)
+                        self.db_manager.add_server_id_name_mapping(instance.uuid, server_name)
                     else:
                         error_info = 'No server id found for cascading id: %s, server: %s' % (instance.uuid, server_name)
                         LOG.error(error_info)
@@ -337,7 +333,8 @@ class HwsComputeDriver(driver.ComputeDriver):
             if job_current_info and job_current_info['status'] == 200:
                 job_status_ac = job_current_info['body']['status']
                 if job_status_ac == 'SUCCESS':
-                    self.db_manager.delet_server_id_by_cascading_id(cascading_server_id)
+                    self.db_manager.delete_server_id_by_cascading_id(cascading_server_id)
+                    self.db_manager.delete_server_id_name_by_cascading_id(cascading_server_id)
                     raise loopingcall.LoopingCallDone()
                 elif job_status_ac == 'FAIL':
                     error_info = json.dumps(job_current_info)
@@ -428,18 +425,19 @@ class HwsComputeDriver(driver.ComputeDriver):
                }
 
     def get_info(self, instance):
-        # STATUS = power_state.NOSTATE
-        #
-        # try:
-        #     server_name = self._transfer_to_host_server_name(instance.uuid)
-        #     servers = self.nova_client.list(search_opts={'name':server_name})
-        #
-        #     if servers and len(servers) == 1:
-        #         STATUS = servers[0]._info['OS-EXT-STS:power_state']
-        # except Exception:
-        #     msg = traceback.format_exc()
-        #     raise exception.NovaException(msg)
-        STATUS = 1
+        STATUS = power_state.NOSTATE
+
+        try:
+            cascaded_server_id = self._get_cascaded_server_id(instance)
+            server = self.hws_client.ecs.get_detail(self.project, cascaded_server_id)
+
+            if server and server['status'] == 200:
+                hws_server_status = server['body']['server']['OS-EXT-STS:power_state']
+                STATUS = HWS_POWER_STATE[hws_server_status]
+                LOG.info('SYNC STATUS of server: %s, STATUS: %s' % (instance.display_name, hws_server_status) )
+        except Exception:
+            msg = traceback.format_exc()
+            raise exception.NovaException(msg)
         return {'state': STATUS,
                 'max_mem': 0,
                 'mem': 0,
@@ -482,7 +480,7 @@ class HwsComputeDriver(driver.ComputeDriver):
         else:
             error_info = 'cascaded server id is not exist for cascading server: %s.' % instance.display_name
             LOG.error(error_info)
-            raise Exception(error_info)
+            raise exception.NovaException(error_info)
 
     def power_on(self, context, instance, network_info,
                  block_device_info=None):
@@ -495,7 +493,7 @@ class HwsComputeDriver(driver.ComputeDriver):
         else:
             error_info = 'cascaded server id is not exist for cascading server: %s.' % instance.display_name
             LOG.error(error_info)
-            raise Exception(error_info)
+            raise exception.NovaException(error_info)
 
     def reboot(self, context, instance, network_info, reboot_type,
                block_device_info=None, bad_volumes_callback=None):
@@ -508,7 +506,7 @@ class HwsComputeDriver(driver.ComputeDriver):
         else:
             error_info = 'cascaded server id is not exist for cascading server: %s.' % instance.display_name
             LOG.error(error_info)
-            raise Exception(error_info)
+            raise exception.NovaException(error_info)
 
     def resume_state_on_host_boot(self, context, instance, network_info,
                                   block_device_info=None):
@@ -539,8 +537,12 @@ class HwsComputeDriver(driver.ComputeDriver):
             error_message = java_response['body']['message']
             exception = java_response['body']['exception']
             LOG.error('Java error message: %s, exception: %s' % (error_message, exception))
-            raise Exception(exception)
-        if 200 != java_response['status']:
+            raise exception.NovaException(exception)
+        if 200 == java_response['status']:
+            return
+        elif 202 == java_response['status']:
+            return
+        else:
             error_info = json.dumps(java_response)
             LOG.error(error_info)
-            raise Exception(error_info)
+            raise exception.NovaException(error_info)

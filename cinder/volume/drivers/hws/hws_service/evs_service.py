@@ -8,8 +8,11 @@ class EVSService(HWSService):
     def __init__(self, ak, sk, region, protocol, host, port):
         super(EVSService, self).__init__(ak, sk, 'EVS', region, protocol, host, port)
 
-    def list(self, project_id):
+    def list(self, project_id, opts=None):
         uri = '/v2/%s/cloudvolumes' % project_id
+        if opts:
+            str_opts = self.convertDictOptsToString(opts)
+            uri = '?'.join([uri, str_opts])
 
         return self.get(uri)
 
@@ -138,5 +141,10 @@ class EVSService(HWSService):
 
         return json.loads(response)
 
+    def get_volume_detail(self, project_id, volume_id):
+        uri = "/v2/%s/volumes/%s" % (project_id, volume_id)
 
+        response = self.get(uri)
+
+        return json.loads(response)
 

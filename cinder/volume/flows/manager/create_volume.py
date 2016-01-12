@@ -577,6 +577,7 @@ class CreateVolumeFromSpecTask(flow_utils.CinderTask):
             # manner.
             #
             # Create the volume and then download the image onto the volume.
+            volume_ref['image_id'] = image_id
             model_update = self.driver.create_volume(volume_ref)
             updates = dict(model_update or dict(), status='downloading')
             try:

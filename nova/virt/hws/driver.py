@@ -214,14 +214,13 @@ class HwsComputeDriver(driver.ComputeDriver):
                                   attached to the instance.
         """
 
-        flavor = CONF.hws.flavor_id
-        LOG.info('FLAVOR: %s' % flavor)
-        image_id = CONF.hws.image_id
+        flavor = self._get_cascaded_flavor_id(instance)
+        image_id = self._get_cascaded_image_id(instance)
+        server_name = self._get_display_name(instance)
+
         vpc_id = CONF.hws.vpc_id
         subnet_id = CONF.hws.subnet_id
         subnet_id_list = [subnet_id]
-        server_name = self._get_display_name(instance)
-        # project_id = instance.project_id
         project_id = CONF.hws.project_id
         root_volume_type = "SATA"
         az = CONF.hws.resource_region
@@ -282,6 +281,28 @@ class HwsComputeDriver(driver.ComputeDriver):
 
         timer = loopingcall.FixedIntervalLoopingCall(_wait_for_boot)
         timer.start(interval=5).wait()
+
+    def _get_cascaded_flavor_id(self, instance):
+        if instance.get('system_metadata'):
+            cascading_flavor_id = instance.get('system_metadata').get('instance_type_flavorid')
+            cascaded_flavor_id = self.db_manager.get_cascaded_flavor_id(cascading_flavor_id)
+            if cascaded_flavor_id:
+                flavor = cascaded_flavor_id
+            else:
+                flavor = CONF.hws.flavor_id
+        LOG.info('FLAVOR: %s' % flavor)
+
+        return flavor
+
+    def _get_cascaded_image_id(self, instance):
+        cascading_image_id = instance.image_ref
+        cascaded_image_id = self.db_manager.get_cascaded_image_id(cascading_image_id)
+        if cascaded_image_id:
+            image_id = cascaded_image_id
+        else:
+            raise exception.NovaException('No matched image id in HWS cloud.')
+
+        return image_id
 
     def _get_display_name(self, instance):
         original_display_name = instance.display_name
@@ -363,13 +384,10 @@ class HwsComputeDriver(driver.ComputeDriver):
         timer = loopingcall.FixedIntervalLoopingCall(_wait_for_destroy)
         timer.start(interval=5).wait()
 
-
     def detach_volume(self, connection_info, instance, mountpoint,
                       encryption=None):
         """Detach the disk attached to the instance."""
         pass
-
-
 
     def get_available_nodes(self, refresh=False):
         """Returns nodenames of all nodes managed by the compute service.

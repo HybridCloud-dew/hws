@@ -28,6 +28,11 @@ CONF.register_opts(hws_opts, hws_group)
 
 LOG = logging.getLogger(__name__)
 
+SATA = 'SATA'
+SSD = 'SSD'
+SAS = 'SAS'
+SUPPORT_VOLUME_TYPE = [SATA, SSD, SAS]
+
 class HWSDriver(driver.VolumeDriver):
     VERSION = "1.0"
 
@@ -45,16 +50,51 @@ class HWSDriver(driver.VolumeDriver):
         self.volume_type_default = CONF.hws.volume_type
 
     def create_volume(self, volume):
-        """Create a volume."""
-        LOG.info('VOLUME - %s' % dir(volume))
+        """Create a volume.
+
+
+        """
+        LOG.info('VOLUME: %s' % dir(volume))
+        LOG.info('IMAGE ID: %s' % volume.get('image_id'))
+        if not volume.get('image_id'):
+            volume_name = volume.display_name
+            project_id = self.project_id
+            size = volume.size
+            volume_type = self.volume_type_default
+
+            job_info = self.hws_client.evs.create_volume(project_id, self.availability_zone,
+                                                         size, volume_type, name=volume_name)
+            self._deal_with_job(job_info, project_id, self._add_volume_mapping_to_db, volume)
+        else:
+            return {'provider_location': 'HWS CLOUD'}
+
+    def copy_image_to_volume(self, context, volume, image_service, image_id):
         volume_name = volume.display_name
         project_id = self.project_id
         size = volume.size
         volume_type = self.volume_type_default
 
+        image_hws_id = self._get_cascaded_image_id(image_id)
+
         job_info = self.hws_client.evs.create_volume(project_id, self.availability_zone,
-                                                     size, volume_type, name=volume_name)
+                                                     size, volume_type, name=volume_name, imageRef=image_hws_id)
         self._deal_with_job(job_info, project_id, self._add_volume_mapping_to_db, volume)
+
+    def _get_volume_type(self, volume_type):
+        if volume_type not in SUPPORT_VOLUME_TYPE:
+            LOG.info('VOLUME TYPE: %s is not support in HWS Clouds, support type is: [%s]. Use SATA as default' %
+                     (volume_type, SUPPORT_VOLUME_TYPE))
+            volume_type = SATA
+
+        return volume_type
+
+    def _get_cascaded_image_id(self, cascading_image_id):
+        cascaded_image_id = self.db_manager.get_cascaded_image_id(cascading_image_id)
+        if not cascaded_image_id:
+            LOG.error('No image mapping in HWS Cloud.')
+            raise Exception('No image mapping in HWS Cloud.')
+
+        return cascaded_image_id
 
     def _add_volume_mapping_to_db(self, job_detail_of_create_volume, volume):
         """
@@ -114,10 +154,20 @@ class HWSDriver(driver.VolumeDriver):
         LOG.info('VOLUME_ID: %s' % cascaded_volume_id)
 
         if cascaded_volume_id:
-            job_info = self.hws_client.evs.delete_volume(project_id, cascaded_volume_id)
-            self._deal_with_job(job_info,project_id, self._delete_volume_mapping, volume)
+            volume_get = self.hws_client.evs.get_volume_detail(project_id, cascaded_volume_id)
+            if volume_get['status'] == 200:
+                job_info = self.hws_client.evs.delete_volume(project_id, cascaded_volume_id)
+                self._deal_with_job(job_info,project_id, self._delete_volume_mapping, volume)
+            elif volume_get['status'] == 404 and volume_get.get('body').get('itemNotFound'):
+                LOG.info('cascaded volume is not exist, so directly return delete success')
+                return
+            else:
+                error_info = 'Delete volume fail, Exception: %s' % json.dumps(volume_get)
+                LOG.error(error_info)
+                raise Exception(error_info)
         else:
             LOG.info('cascaded volume is not exist, so directly return delete success')
+            return
 
     def _delete_volume_mapping(self, job_detail_info, volume):
         cascading_volume_id = volume.id

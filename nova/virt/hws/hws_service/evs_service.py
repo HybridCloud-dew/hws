@@ -89,3 +89,9 @@ class EVSService(HWSService):
 
         return json.loads(response)
 
+    def get_volume_detail(self, project_id, volume_id):
+        uri = "/v2/%s/volumes/%s" % (project_id, volume_id)
+
+        response = self.get(uri)
+
+        return json.loads(response)

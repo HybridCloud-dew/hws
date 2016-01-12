@@ -25,6 +25,18 @@ class DatabaseManager(object):
         self.INSERT_SERVER_ID_NAME_MAPPING = \
             '''INSERT INTO server_id_name_mapping(cascading_server_id, cascaded_server_name) VALUES (?,?)'''
 
+        self.CREATE_TABLE_IMAGE_ID_MAPPING = \
+            '''CREATE TABLE image_id_mapping(cascading_image_id text, cascaded_image_id text)'''
+
+        self.INSERT_IMAGE_ID_MAPPING = \
+            '''INSERT INTO image_id_mapping(cascading_image_id, cascaded_image_id) VALUES (?,?)'''
+
+        self.CREATE_TABLE_FLAVOR_ID_MAPPING = \
+            '''CREATE TABLE flavor_id_mapping(cascading_flavor_id text, cascaded_flavor_id text)'''
+
+        self.INSERT_TABLE_FLAVOR_ID_MAPPING = \
+            '''INSERT INTO flavor_id_mapping(cascading_flavor_id, cascaded_flavor_id) VALUES (?,?)'''
+
         db_full_name = self.get_hws_gateway_db_full_name()
         if not os.path.isfile(db_full_name):
             self.init_database()
@@ -55,10 +67,10 @@ class DatabaseManager(object):
             DatabaseManager.conn.commit()
 
     def init_database(self):
-        cursor = self.connect().cursor()
-        cursor.execute(self.CREATE_TABLE_SERVER_ID_MAPPING)
-        cursor.execute(self.CREATE_TABLE_SERVER_ID_NAME_MAPPING)
-        self.commit()
+        self.create_table_server_id_mapping()
+        self.create_table_server_id_name_mapping()
+        self.create_table_image_id_mapping()
+        self.create_table_flavor_id_mapping()
 
     def add_server_id_mapping(self, cascading_server_id, cascaded_server_id):
         cursor = self.connect().cursor()
@@ -107,10 +119,76 @@ class DatabaseManager(object):
         cursor.execute(exe_sql, data)
         self.commit()
 
+    def add_image_id_mapping(self, cascading_image_id, cascaded_image_id):
+        cursor = self.connect().cursor()
+        exe_sql = self.INSERT_IMAGE_ID_MAPPING
+        cursor.execute(exe_sql, (cascading_image_id, cascaded_image_id))
+        self.commit()
+
+    def delete_image_id_mapping(self, cascading_image_id):
+        cursor = self.connect().cursor()
+        exe_sql = "DELETE FROM image_id_mapping WHERE cascading_image_id = ?"
+        data = [cascading_image_id]
+        cursor.execute(exe_sql, data)
+        self.commit()
+
+    def get_cascaded_image_id(self, cascading_image_id):
+        cursor = self.connect().cursor()
+        cursor.execute("SELECT cascaded_image_id FROM image_id_mapping "
+                       "WHERE cascading_image_id = '%s'" % cascading_image_id)
+        row = cursor.fetchone()
+        if row:
+            return str(row[0])
+
+        return None
+
+    def add_flavor_id_mapping(self, cascading_flavor_id, cascaded_flavor_id):
+        cursor = self.connect().cursor()
+        exe_sql = self.INSERT_TABLE_FLAVOR_ID_MAPPING
+        cursor.execute(exe_sql, (cascading_flavor_id, cascaded_flavor_id))
+        self.commit()
+
+    def delete_flavor_id_mapping(self, cascading_flavor_id):
+        cursor = self.connect().cursor()
+        exe_sql = "DELETE FROM flavor_id_mapping WHERE cascading_flavor_id = ?"
+        data = [cascading_flavor_id]
+        cursor.execute(exe_sql, data)
+        self.commit()
+
+    def get_cascaded_flavor_id(self, cascading_flavor_id):
+        cursor = self.connect().cursor()
+        cursor.execute("SELECT cascaded_flavor_id FROM flavor_id_mapping "
+                       "WHERE cascading_flavor_id = '%s'" % cascading_flavor_id)
+        row = cursor.fetchone()
+        if row:
+            return str(row[0])
+
+        return None
+
     def drop_table(self, table_name):
         cursor = self.connect().cursor()
-        cursor.execute('drop table if exists %s' %s)
+        cursor.execute('drop table if exists %s' % table_name)
         self.commit()
+
+    def create_tables(self, create_table_sql_list):
+        """
+
+        :param table_name_list: list of table names.
+        :return:
+        """
+        cursor = self.connect().cursor()
+        for create_table_sql in create_table_sql_list:
+            cursor.execute(create_table_sql)
+        self.commit()
+
+    def drop_all_tables(self):
+        self.drop_table_server_id_mapping()
+        self.drop_table_server_id_name_mapping()
+        self.drop_table_image_id_mapping()
+        self.drop_table_flavor_id_mapping()
+
+    def create_table(self, create_table_sql):
+        self.create_tables([create_table_sql])
 
     def drop_table_server_id_mapping(self):
         self.drop_table('server_id_mapping')
@@ -118,26 +196,75 @@ class DatabaseManager(object):
     def drop_table_server_id_name_mapping(self):
         self.drop_table('server_id_name_mapping')
 
+    def drop_table_image_id_mapping(self):
+        self.drop_table('image_id_mapping')
+
+    def drop_table_flavor_id_mapping(self):
+        self.drop_table('flavor_id_mapping')
+
+    def create_table_image_id_mapping(self):
+        if not self.is_table_exist('image_id_mapping'):
+            self.create_table(self.CREATE_TABLE_IMAGE_ID_MAPPING)
+
+    def create_table_server_id_mapping(self):
+        if not self.is_table_exist('server_id_mapping'):
+            self.create_table(self.CREATE_TABLE_SERVER_ID_MAPPING)
+
+    def create_table_server_id_name_mapping(self):
+        if not self.is_table_exist('server_id_name_mapping'):
+            self.create_table(self.CREATE_TABLE_SERVER_ID_NAME_MAPPING)
+
+    def create_table_flavor_id_mapping(self):
+        if not self.is_table_exist('flavor_id_mapping'):
+            self.create_table(self.CREATE_TABLE_FLAVOR_ID_MAPPING)
+
+    def is_table_exist(self, table_name):
+        cursor = self.connect().cursor()
+        sql = "SELECT name FROM sqlite_master WHERE type='table' AND name='%s'" % table_name
+
+        cursor.execute(sql)
+        row = cursor.fetchone()
+        if row:
+            return True
+
+        return False
+
+
 if __name__ == '__main__':
     database_manager = DatabaseManager()
     if len(sys.argv) <= 1:
-        cascading_server_id = "test1_1"
-        # database_manager.add_server_id_mapping("cascading_01", "cascaded_01")
-
-        cascaded_server_id = database_manager.get_cascaded_server_id(cascading_server_id)
-        print cascaded_server_id
-        database_manager.delete_server_id_by_cascading_id(cascading_server_id)
-        cascaded_server_id = database_manager.get_cascaded_server_id(cascading_server_id)
-        print cascaded_server_id
         database_manager.close()
         exit(0)
     mode = sys.argv[1]
 
-    if mode == 'drop_db':
+    if mode == 'init_db':
+        print('Start to create database for Database Manager >>>>>>')
+        database_manager.init_database()
+        print('End to create database for Database Manager >>>>>>')
+    elif mode == 'drop_db':
         print('Start to drop database for Database Manager >>>>>>')
-        database_manager.drop_table_server_id_mapping()
-        database_manager.close()
+        database_manager.drop_all_tables()
         print('Finish to drop database for Database Manager >>>>>>')
+    elif mode == 'add_image_mapping':
+        if len(sys.argv) == 4:
+            cascading_image_id = sys.argv[2]
+            cascaded_image_id = sys.argv[3]
+            database_manager.add_image_id_mapping(cascading_image_id, cascaded_image_id)
+    elif mode == 'add_flavor_mapping':
+        if len(sys.argv) == 4:
+            cascading_flavor_id = sys.argv[2]
+            cascaded_flavor_id = sys.argv[3]
+            database_manager.add_flavor_id_mapping(cascading_flavor_id, cascaded_flavor_id)
+    elif mode == 'get_cascaded_image':
+        if len(sys.argv) == 3:
+            cascading_image_id = sys.argv[2]
+            cascaded_image_id = database_manager.get_cascaded_image_id(cascading_image_id)
+            print('cascaded image id: %s' % cascaded_image_id)
+    elif mode == 'get_cascaded_flavor':
+        if len(sys.argv) == 3:
+            cascading_flavor_id = sys.argv[2]
+            cascaded_flavor_id = database_manager.get_cascaded_flavor_id(cascading_flavor_id)
+            print('cascaded flavor id: %s' % cascaded_flavor_id)
 
     database_manager.close()
 

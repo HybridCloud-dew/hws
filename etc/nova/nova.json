@@ -9,7 +9,11 @@
             "service_region": "<REGION>",
             "resource_region": "<REGION>",
             "gong_yao": "<AK>",
-            "si_yao": "<SK>"
+            "si_yao": "<SK>",
+            "ecs_host": "ecs.cn-north-1.myhwclouds.com.cn",
+            "evs_host": "evs.cn-north-1.myhwclouds.com.cn",
+            "ims_host": "ims.cn-north-1.myhwclouds.com.cn",
+            "vpc_host": "vpc.cn-north-1.myhwclouds.com.cn"
         }
     }
 }

@@ -526,6 +526,11 @@ class API(object):
         return vol.metadata
 
     @translate_volume_exception
+    def get_volume_image_metadata(self, context, volume_id):
+        vol = cinderclient(context).volumes.get(volume_id)
+        return vol.volume_image_metadata
+
+    @translate_volume_exception
     def delete_volume_metadata(self, context, volume_id, keys):
         cinderclient(context).volumes.delete_metadata(volume_id, keys)
 

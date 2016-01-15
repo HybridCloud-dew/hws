@@ -2,7 +2,7 @@ __author__ = 'Administrator'
 
 import json
 
-from nova.virt.hws.hws_service import HWSService
+from hwcloud.hws_service import HWSService
 
 
 class ECSService(HWSService):
@@ -202,9 +202,6 @@ class ECSService(HWSService):
         request_body_dict['server'] = request_server_body
         request_body_string = json.dumps(request_body_dict)
         response = self.post(uri, request_body_string)
-
-        # log.debug('create server of hws uri: %s, request_body_string: %s, response: %s' %
-        #           (uri, request_body_string, response))
 
         return json.loads(response)
 

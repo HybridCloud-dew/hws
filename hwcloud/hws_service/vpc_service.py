@@ -2,7 +2,7 @@ __author__ = 'Administrator'
 
 import json
 
-from nova.virt.hws.hws_service import HWSService
+from hwcloud.hws_service import HWSService
 
 
 class VPCService(HWSService):

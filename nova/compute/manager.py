@@ -1330,18 +1330,6 @@ class ComputeManager(manager.Manager):
                 self._set_instance_error_state(context, instance)
                 notify("error", fault=e)  # notify that build failed
 
-    def _prebuild_instance(self, context, instance):
-        self._check_instance_exists(context, instance)
-
-        try:
-            self._start_building(context, instance)
-        except (exception.InstanceNotFound,
-                exception.UnexpectedDeletingTaskStateError):
-            msg = _("Instance disappeared before we could start it")
-            # Quickly bail out of here
-            raise exception.BuildAbortException(instance_uuid=instance.uuid,
-                    reason=msg)
-
     def _validate_instance_group_policy(self, context, instance,
             filter_properties):
         # NOTE(russellb) Instance group policy is enforced by the scheduler.
@@ -1372,8 +1360,8 @@ class ComputeManager(manager.Manager):
                             reason=msg)
             elif group_hosts and [self.host] != group_hosts:
                 # NOTE(huawei) Native code only considered anti-affinity
-                # policy, but affinity policy also have the same problem. 
-                # so we add checker for affinity policy instance. 
+                # policy, but affinity policy also have the same problem.
+                # so we add checker for affinity policy instance.
                 if 'affinity' in group.policies:
                     msg = _("affinity instance group policy was violated.")
                     raise exception.RescheduledException(
@@ -1381,6 +1369,18 @@ class ComputeManager(manager.Manager):
                             reason=msg)
 
         _do_validation(context, instance, group_hint)
+
+    def _prebuild_instance(self, context, instance):
+        self._check_instance_exists(context, instance)
+
+        try:
+            self._start_building(context, instance)
+        except (exception.InstanceNotFound,
+                exception.UnexpectedDeletingTaskStateError):
+            msg = _("Instance disappeared before we could start it")
+            # Quickly bail out of here
+            raise exception.BuildAbortException(instance_uuid=instance.uuid,
+                    reason=msg)
 
     def _build_instance(self, context, request_spec, filter_properties,
             requested_networks, injected_files, admin_password, is_first_time,
@@ -2398,6 +2398,7 @@ class ComputeManager(manager.Manager):
 
         # NOTE(melwitt): attempt driver destroy before releasing ip, may
         #                want to keep ip allocated for certain failures
+        LOG.info('Nash, destroy')
         try:
             self.driver.destroy(context, instance, network_info,
                     block_device_info)

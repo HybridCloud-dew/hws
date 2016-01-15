@@ -3,8 +3,8 @@ import json
 import time
 
 from cinder.volume import driver
-from cinder.volume.drivers.hws.database_manager import DatabaseManager
-from cinder.volume.drivers.hws.hws_service.client import HWSClient
+from hwcloud.database_manager import DatabaseManager
+from hwcloud.hws_service.client import HWSClient
 from cinder.openstack.common import log as logging
 
 from oslo.config import cfg
@@ -69,16 +69,19 @@ class HWSDriver(driver.VolumeDriver):
             return {'provider_location': 'HWS CLOUD'}
 
     def copy_image_to_volume(self, context, volume, image_service, image_id):
-        volume_name = volume.display_name
-        project_id = self.project_id
-        size = volume.size
-        volume_type = self.volume_type_default
+        # Not to create volume when call cinder create volume API
+        # Only when attache or dettach, or create server by volume, then create volume.
+        if not image_id:
+            volume_name = volume.display_name
+            project_id = self.project_id
+            size = volume.size
+            volume_type = self.volume_type_default
 
-        image_hws_id = self._get_cascaded_image_id(image_id)
+            image_hws_id = self._get_cascaded_image_id(image_id)
 
-        job_info = self.hws_client.evs.create_volume(project_id, self.availability_zone,
-                                                     size, volume_type, name=volume_name, imageRef=image_hws_id)
-        self._deal_with_job(job_info, project_id, self._add_volume_mapping_to_db, volume)
+            job_info = self.hws_client.evs.create_volume(project_id, self.availability_zone,
+                                                         size, volume_type, name=volume_name, imageRef=image_hws_id)
+            self._deal_with_job(job_info, project_id, self._add_volume_mapping_to_db, volume)
 
     def _get_volume_type(self, volume_type):
         if volume_type not in SUPPORT_VOLUME_TYPE:
@@ -107,7 +110,10 @@ class HWSDriver(driver.VolumeDriver):
         self.db_manager.add_volume_mapping(volume_id, hws_volume_id)
         LOG.info('Success to add volume mapping: {%s: %s}' % (volume_id, hws_volume_id))
 
-    def _deal_with_job(self, job_info, project_id, function_deal_with_success=None, object=None):
+    def _deal_with_job(self, job_info, project_id,
+                       function_deal_with_success=None,
+                       function_deal_with_fail=None,
+                       object=None):
         if job_info['status'] == 200:
             job_id = job_info['body']['job_id']
             while True:
@@ -120,8 +126,9 @@ class HWSDriver(driver.VolumeDriver):
                             LOG.debug('job<%s> is still RUNNING.' % job_id)
                             continue
                         elif job_status == 'FAIL':
+                            if function_deal_with_fail:
+                                function_deal_with_fail(job_detail_info, object)
                             error_info = 'job<%s> FAIL, ERROR INFO: %s' % (job_id, json.dumps(job_detail_info))
-                            LOG.error(error_info)
                             raise Exception(error_info)
                         elif job_status == 'SUCCESS':
                             if function_deal_with_success:
@@ -146,6 +153,43 @@ class HWSDriver(driver.VolumeDriver):
             error_info = json.dumps(job_info)
             LOG.error('Job init FAIL, error info: %s' % error_info)
             raise Exception(error_info)
+
+    def _deal_with_create_volume_fail(self, job_detail_info, volume):
+        """
+        deal with create volume fail.
+        If hws volume is created, but fail, then save id mapping in db. then raise exception.
+        if hws volume id is not created, raise exception directly.
+        {
+            "body": {
+                "status": "FAIL",
+                "entities": {
+                    "volume_id": "1be7a768-59b6-4ef6-b4c0-a4f8039fa626"
+                },
+                "job_id": "8aace0c751b0a3bd01523529e4f70d35",
+                "job_type": "createVolume",
+                "begin_time": "2016-01-12T09:28:04.086Z",
+                "end_time": "2016-01-12T09:28:32.252Z",
+                "error_code": "EVS.2024",
+                "fail_reason": "EbsCreateVolumeTask-fail:volume is error!"
+            },
+            "status": 200
+        }
+        :param job_detail_info:
+        :param volume:
+        :return:
+        """
+        job_id = job_detail_info.get('body').get('job_id')
+        error_info = 'job<%s> FAIL, ERROR INFO: %s' % (job_id, json.dumps(job_detail_info))
+        if job_detail_info.get('body').get('entities'):
+            hws_volume_id = job_detail_info.get('body').get('entities').get('volume_id')
+            if hws_volume_id:
+                LOG.info('HWS volume is created, id is: %s' % hws_volume_id)
+                volume_id = volume.id
+                self.db_manager.add_volume_mapping(volume_id, hws_volume_id)
+                LOG.debug('Success to add volume mapping: {%s: %s}' % (volume_id, hws_volume_id))
+                raise Exception(error_info)
+
+        raise Exception(error_info)
 
     def delete_volume(self, volume):
         cascading_volume_id = volume.id
@@ -196,9 +240,9 @@ class HWSDriver(driver.VolumeDriver):
         """Allow connection to connector and return connection info."""
         LOG.debug('vCloud Driver: initialize_connection')
 
-        driver_volume_type = 'vcloud_volume'
+        driver_volume_type = 'hwclouds_volume'
         data = {}
-        data['backend'] = 'vcloud'
+        data['backend'] = 'hwclouds'
         data['volume_id'] = volume['id']
         data['display_name'] = volume['display_name']
 

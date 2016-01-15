@@ -1,16 +1,17 @@
 __author__ = 'Administrator'
 
-from nova.virt.hws.hws_service.ecs_service import ECSService
-from nova.virt.hws.hws_service.evs_service import EVSService
-from nova.virt.hws.hws_service.ims_service import IMSService
-from nova.virt.hws.hws_service.vpc_service import VPCService
-
 from oslo.config import cfg
+from hwcloud.hws_service.ecs_service import ECSService
+from hwcloud.hws_service.evs_service import EVSService
+from hwcloud.hws_service.ims_service import IMSService
+from hwcloud.hws_service.vpc_service import VPCService
+from hwcloud.hws_service.vbs_service import VBSService
 
-hws_opts = [cfg.StrOpt('ecs_host', help='ecs_host'),
-            cfg.StrOpt('evs_host', help='evs_host'),
-            cfg.StrOpt('ims_host', help='ims_host'),
-            cfg.StrOpt('vpc_host', help='vpc_host')
+hws_opts = [cfg.StrOpt('ecs_host', help='ecs_host', default='ecs.cn-north-1.myhwclouds.com.cn'),
+            cfg.StrOpt('evs_host', help='evs_host', default='evs.cn-north-1.myhwclouds.com.cn'),
+            cfg.StrOpt('ims_host', help='ims_host', default='ims.cn-north-1.myhwclouds.com.cn'),
+            cfg.StrOpt('vpc_host', help='vpc_host', default='vpc.cn-north-1.myhwclouds.com.cn'),
+            cfg.StrOpt('vbs_host', help='vbs_host', default='vbs.cn-north-1.myhwclouds.com.cn')
             ]
 CONF = cfg.CONF
 hws_group = 'hws'
@@ -28,11 +29,13 @@ class HWSClient(object):
         self.evs_host = CONF.hws.evs_host
         self.ims_host = CONF.hws.ims_host
         self.vpc_host = CONF.hws.vpc_host
+        self.vbs_host = CONF.hws.vbs_host
 
         self.ecs = ECSService(ak, sk, self.region, self.protocol, self.ecs_host, self.port)
         self.evs = EVSService(ak, sk, self.region, self.protocol, self.evs_host, self.port)
         self.ims = IMSService(ak, sk, self.region, self.protocol, self.ims_host, self.port)
         self.vpc = VPCService(ak, sk, self.region, self.protocol, self.vpc_host, self.port)
+        self.vbs = VBSService(ak, sk, self.region, self.protocol, self.vbs_host, self.port)
 
 if __name__ == '__main__':
     ak = 'FAVX6E6CN0SSJT0QV4PC'
@@ -50,29 +53,16 @@ if __name__ == '__main__':
     subnet_id = '7bd9410f-38bb-4fbb-aa7a-cf4a22cb20f3'
     subnet_id_list = [subnet_id]
     root_volume_type = 'SATA'
-    # my_server = hws_client.ecs.create_server(project_id, image_id,
-    #                                      flavor_id, 'my_test_server_02', vpc_id,
-    #                                      subnet_id_list, root_volume_type, availability_zone="cn-north-1a")
-    # print my_server
-    # job_id =  my_server['body']['job_id']
-    #
-    # job_id = '8aace0c851b0a3c10151f77f2b8443c9'
-    # job_status = hws_client.ecs.get_job_detail(project_id,job_id)
-    # print job_status
+    availability_zone="cn-north-1a"
+    size = 120
+    # job_info = hws_client.evs.create_volume(project_id, availability_zone, size, root_volume_type, name='v_1')
+    # print job_info
 
-    # servers = hws_client.ecs.list(project_id)
-    # print servers
-
-    # server_id = '62ce1e0e-23bb-4c77-90db-491b43aa7a4e'
-    # job_status = hws_client.ecs.stop_server(project_id, server_id)
-    # print job_status
-    # opts = {'name':'nash_server_01'}
-    # servers = hws_client.ecs.get_detail(project_id, server_id)
-    # print servers
-
-    # job_statcs_ac = job_status['body']['status']
-    # print job_status
-    # print(job_statcs_ac == "SUCCESS")
-
-    flavors = hws_client.ecs.list_flavors(project_id)
-    print flavors
+    # job_detail = hws_client.evs.get_job_detail(project_id, '8aace0c8523c082201523f215b0903b3')
+    # print job_detail
+    volume_id = '9dfd0600-f822-48fa-b831-f43d97135ee5'
+    backup_name = 'bk_1'
+    job_info = hws_client.vbs.create_backup(project_id, volume_id, backup_name)
+    print(job_info)
+    job_id = job_info['body']['job_id']
+    job_detail = hws_client.vbs.get_job_detail(project_id, job_id)

@@ -3,17 +3,18 @@ import traceback
 import json
 import random
 import string
+import time
 
 from nova.virt import driver
-# from nova.virt.hws.reference_service import NovaService
 from nova.openstack.common import jsonutils
 from nova.compute import power_state
 from nova import exception
 from nova.openstack.common import loopingcall
 from nova.openstack.common import log as logging
+from nova.volume.cinder import API as cinder_api
 
-from nova.virt.hws.hws_service.client import HWSClient
-from nova.virt.hws.database_manager import DatabaseManager
+from hwcloud.hws_service.client import HWSClient
+from hwcloud.database_manager import DatabaseManager
 from oslo.config import cfg
 
 LOG = logging.getLogger(__name__)
@@ -74,6 +75,7 @@ class HwsComputeDriver(driver.ComputeDriver):
         self.project = CONF.hws.project_id
         self.hws_client = HWSClient(gong_yao, si_yao, region, protocol, port)
         self.db_manager = DatabaseManager()
+        self.cinder_api = cinder_api()
 
     def _transfer_to_host_server_name(self, instance_uuid):
         """
@@ -206,6 +208,7 @@ class HwsComputeDriver(driver.ComputeDriver):
                                u'disk_format': u'qcow2',
                                u'id': u'6004b47b-d453-4695-81be-cd127e23f59e'
                             }
+
         :param injected_files: User files to inject into instance.
         :param admin_password: Administrator password to set in instance.
         :param network_info:
@@ -214,6 +217,174 @@ class HwsComputeDriver(driver.ComputeDriver):
                                   attached to the instance.
         """
 
+        bdms = block_device_info.get('block_device_mapping', [])
+        if not instance.image_ref and len(bdms) > 0:
+            volume_ids, bootable_volume_id = self._get_volume_ids_from_bdms(bdms)
+            if bootable_volume_id:
+                cascaded_volume_id = self.db_manager.get_cascaded_volume_id(bootable_volume_id)
+                # if cascaded volume already been created, then the data maybe changed, so cann't be created from image.
+                if cascaded_volume_id:
+                    LOG.info('Cascaded volume exist, need to transfer to image then create server from new image')
+                    cascaded_backup_id = self.get_cascaded_volume_backup(bootable_volume_id)
+                    # if cascaded_backup_id exist, means last time execute may fail, need to go on with last time job.
+                    if cascaded_backup_id:
+                        self.create_server_from_backup(cascaded_backup_id, bootable_volume_id, instance)
+                    else:
+                        cascaded_backup_id = self.create_backup_from_volume()
+                        self.create_server_from_backup(cascaded_backup_id, cascaded_volume_id, instance)
+                    create_backup_job_info = self.hws_client.vbs.create_backup(self.project, cascaded_volume_id)
+                    self._deal_with_job(create_backup_job_info, self.project,
+                                        self.after_create_backup_success,
+                                        self.after_create_backup_fail,
+                                        bootable_volume_id)
+                # if cascaded volume not exist, the data is the same between image and volume,
+                # so we can create server from image.
+                else:
+                    LOG.info('Cascaded volume not exist, create server from image directly')
+                    image_id = self._get_volume_source_image_id(context, bootable_volume_id)
+                    instance.image_ref = image_id
+                    self._spawn_from_image(context, instance, image_meta, injected_files,
+                                            admin_password, network_info, block_device_info)
+        else:
+            self._spawn_from_image(context, instance, image_meta, injected_files,
+              admin_password, network_info, block_device_info)
+
+    def create_server_from_backup(self, cascaded_backup_id, cascading_volume_id, instance):
+        cascaded_image_id = self.get_cascaded_backup_image(cascading_volume_id)
+        # if cascaded_image_id exist, means last time it failed, need to go on.
+        if cascaded_image_id:
+            self.spawn_from_image_for_volume(instance, cascaded_image_id)
+        else:
+            cascaded_image_id = self.create_image_from_backup()
+            self.spawn_from_image_for_volume(instance, cascaded_image_id)
+
+    def create_backup_from_volume(self):
+        backup_id = ''
+        self.
+        return backup_id
+
+    def create_image_from_backup(self):
+        cascaded_image_id = ''
+        return cascaded_image_id
+
+    def get_cascaded_volume_backup(self, cascading_volume_id):
+        return self.db_manager.get_cascaded_backup(cascading_volume_id)
+
+    def get_cascaded_backup_image(self, cascading_volume_id):
+        return self.db_manager.get_cascaded_backup_image(cascading_volume_id)
+
+    def delete_cascaded_volume_backup_image(self, cascaded_volume_id):
+        pass
+
+    def after_create_backup_success(self, create_back_job_detail_info, obj):
+        pass
+
+    def after_create_backup_fail(self, create_back_job_detail_info, obj):
+        pass
+
+    def _deal_with_job(self, job_info, project_id,
+                       function_deal_with_success=None,
+                       function_deal_with_fail=None,
+                       object=None):
+        if job_info['status'] == 200:
+            job_id = job_info['body']['job_id']
+            while True:
+                time.sleep(5)
+                job_detail_info = self.hws_client.vbs.get_job_detail(project_id, job_id)
+                if job_detail_info:
+                    if job_detail_info['status'] == 200:
+                        job_status = job_detail_info['body']['status']
+                        if job_status == 'RUNNING':
+                            LOG.debug('job<%s> is still RUNNING.' % job_id)
+                            continue
+                        elif job_status == 'FAIL':
+                            if function_deal_with_fail:
+                                function_deal_with_fail(job_detail_info, object)
+                            error_info = 'job<%s> FAIL, ERROR INFO: %s' % (job_id, json.dumps(job_detail_info))
+                            raise Exception(error_info)
+                        elif job_status == 'SUCCESS':
+                            if function_deal_with_success:
+                                function_deal_with_success(job_detail_info, object)
+                            success_info = 'job<%s> SUCCESS.' % job_id
+                            LOG.info(success_info)
+                            break
+                    elif job_detail_info['status'] == 'error':
+                        error_message = job_detail_info['body']['message']
+                        exception = job_detail_info['body']['exception']
+                        LOG.error('Java error message: %s, exception: %s' % (error_message, exception))
+                        continue
+                    else:
+                        info = json.dumps(job_detail_info)
+                        LOG.info('Job info get has some issue: %s, will retry to get again.' % info )
+                        continue
+                else:
+                    retry_info = 'job detail info is empty, will retry to get. JOB DETAIL: %s' % job_detail_info
+                    LOG.info(retry_info)
+                    continue
+        else:
+            error_info = json.dumps(job_info)
+            LOG.error('Job init FAIL, error info: %s' % error_info)
+            raise Exception(error_info)
+
+    def _get_volume_source_image_id(self, context, volume_id):
+        """
+        volume_image_metadata:
+        {
+            u'container_format': u'bare',
+            u'min_ram': u'0',
+            u'disk_format': u'qcow2',
+            u'image_name': u'cirros',
+            u'image_id': u'617e72df-41ba-4e0d-ac88-cfff935a7dc3',
+            u'checksum': u'd972013792949d0d3ba628fbe8685bce',
+            u'min_disk': u'0',
+            u'size': u'13147648'
+        }
+        :param context:
+        :param volume_id:
+        :return:
+        """
+        volume_image_metadata = self.cinder_api.get_volume_image_metadata(context, volume_id)
+        source_image_id = volume_image_metadata.get('image_id')
+        return source_image_id
+
+
+    def _get_volume_ids_from_bdms(self, bdms):
+        """
+
+        :param bdms:
+         [{
+            'guest_format': None,
+            'boot_index': 0,
+            'mount_device': u'/dev/sda',
+            'connection_info': {
+                u'driver_volume_type': u'vcloud_volume',
+                'serial': u'ea552394-8308-4cce-824b-8fd9cc3be9d4',
+                u'data': {
+                    u'access_mode': u'rw',
+                    u'qos_specs': None,
+                    u'display_name': u'volume_01',
+                    u'volume_id': u'ea552394-8308-4cce-824b-8fd9cc3be9d4',
+                    u'backend': u'vcloud'
+                }
+            },
+            'disk_bus': None,
+            'device_type': None,
+            'delete_on_termination': False
+        }]
+        :return: volume_ids, bootable_volume_id
+        """
+        volume_ids = []
+        bootable_volume_id = None
+        for bdm in bdms:
+            volume_id = bdm['connection_info']['data']['volume_id']
+            volume_ids.append(volume_id)
+            if 0 == bdm['boot_index']:
+                bootable_volume_id = volume_id
+
+        return volume_ids, bootable_volume_id
+
+    def _spawn_from_image(self, context, instance, image_meta, injected_files,
+              admin_password, network_info=None, block_device_info=None):
         flavor = self._get_cascaded_flavor_id(instance)
         image_id = self._get_cascaded_image_id(instance)
         server_name = self._get_display_name(instance)
@@ -282,6 +453,26 @@ class HwsComputeDriver(driver.ComputeDriver):
         timer = loopingcall.FixedIntervalLoopingCall(_wait_for_boot)
         timer.start(interval=5).wait()
 
+    def spawn_from_image_for_volume(self, instance, image_id):
+        flavor = self._get_cascaded_flavor_id(instance)
+        server_name = self._get_display_name(instance)
+
+        vpc_id = CONF.hws.vpc_id
+        subnet_id = CONF.hws.subnet_id
+        subnet_id_list = [subnet_id]
+        project_id = CONF.hws.project_id
+        root_volume_type = "SATA"
+        az = CONF.hws.resource_region
+        cascading_server_id = instance.uuid
+        cascaded_server_id = self.db_manager.get_cascaded_server_id(cascading_server_id)
+        if cascaded_server_id:
+            raise Exception('HWS server is already created, no need to create.')
+        else:
+            created_job = self.hws_client.ecs.create_server(project_id, image_id, flavor,
+                                                                server_name, vpc_id, subnet_id_list, root_volume_type,
+                                                                availability_zone=az)
+            self._deal_with_job(created_job, project_id)
+
     def _get_cascaded_flavor_id(self, instance):
         if instance.get('system_metadata'):
             cascading_flavor_id = instance.get('system_metadata').get('instance_type_flavorid')
@@ -336,7 +527,8 @@ class HwsComputeDriver(driver.ComputeDriver):
 
                 delete_server_list = []
                 delete_server_list.append(cascaded_server_id)
-                delete_job_result = self.hws_client.ecs.delete_server(project_id, delete_server_list, True, True)
+                delete_job_result = self.hws_client.ecs.delete_server(project_id, delete_server_list,
+                                                                      True, destroy_disks)
                 self._deal_java_error(delete_job_result)
             else:
                 # if there is no mapped cascaded server id, means there is no cascaded server

@@ -2,7 +2,7 @@ __author__ = 'Administrator'
 
 import json
 
-from cinder.volume.drivers.hws.hws_service import HWSService
+from hwcloud.hws_service import HWSService
 
 
 class IMSService(HWSService):

@@ -318,4 +318,20 @@ class ECSService(HWSService):
 
         return json.loads(response)
 
+    def attach_volume(self, project_id, server_id, volume_id, device_name):
+        uri = 'v1/%s/cloudservers/%s/attachvolume' % (project_id, server_id)
+        request_body = {}
+        volume_attachment = {}
+        volume_attachment['volumeId'] = volume_id
+        volume_attachment['device'] = device_name
+        request_body['volumeAttachment'] = volume_attachment
+        request_body_string = json.dumps(request_body)
+        response = self.post(uri, request_body_string)
 
+        return json.loads(response)
+
+    def detach_volume(self, project_id, server_id, attachment_id):
+        uri = '/v1/%s/cloudservers/%s/detachvolume/%s' % (project_id, server_id, attachment_id)
+        response = self.delete(uri)
+
+        return json.loads(response)

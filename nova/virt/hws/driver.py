@@ -39,6 +39,11 @@ HWS_POWER_STATE = {
     HWS_DOMAIN_PMSUSPENDED: power_state.SUSPENDED,
 }
 
+SATA = 'SATA'
+SSD = 'SSD'
+SAS = 'SAS'
+SUPPORT_VOLUME_TYPE = [SATA, SSD, SAS]
+
 hws_opts = [
     cfg.StrOpt('project_id',
                help='project_id'),
@@ -230,13 +235,8 @@ class HwsComputeDriver(driver.ComputeDriver):
                     if cascaded_backup_id:
                         self.create_server_from_backup(cascaded_backup_id, bootable_volume_id, instance)
                     else:
-                        cascaded_backup_id = self.create_backup_from_volume()
-                        self.create_server_from_backup(cascaded_backup_id, cascaded_volume_id, instance)
-                    create_backup_job_info = self.hws_client.vbs.create_backup(self.project, cascaded_volume_id)
-                    self._deal_with_job(create_backup_job_info, self.project,
-                                        self.after_create_backup_success,
-                                        self.after_create_backup_fail,
-                                        bootable_volume_id)
+                        cascaded_backup_id = self.create_backup_from_volume(self.project, bootable_volume_id, cascaded_volume_id)
+                        self.create_server_from_backup(cascaded_backup_id, bootable_volume_id, instance)
                 # if cascaded volume not exist, the data is the same between image and volume,
                 # so we can create server from image.
                 else:
@@ -245,6 +245,8 @@ class HwsComputeDriver(driver.ComputeDriver):
                     instance.image_ref = image_id
                     self._spawn_from_image(context, instance, image_meta, injected_files,
                                             admin_password, network_info, block_device_info)
+            else:
+                raise Exception('No bootable volume for created server')
         else:
             self._spawn_from_image(context, instance, image_meta, injected_files,
               admin_password, network_info, block_device_info)
@@ -253,19 +255,60 @@ class HwsComputeDriver(driver.ComputeDriver):
         cascaded_image_id = self.get_cascaded_backup_image(cascading_volume_id)
         # if cascaded_image_id exist, means last time it failed, need to go on.
         if cascaded_image_id:
-            self.spawn_from_image_for_volume(instance, cascaded_image_id)
+            self.spawn_from_image_for_volume(instance, cascaded_image_id, cascading_volume_id)
         else:
-            cascaded_image_id = self.create_image_from_backup()
-            self.spawn_from_image_for_volume(instance, cascaded_image_id)
+            cascaded_image_id = self.create_image_from_backup(cascaded_backup_id, cascading_volume_id)
+            self.spawn_from_image_for_volume(instance, cascaded_image_id, cascading_volume_id)
 
-    def create_backup_from_volume(self):
-        backup_id = ''
-        self.
+    def create_backup_from_volume(self, project_id, cascading_volume_id, cascaded_volume_id):
+        create_backup_job_info = self.hws_client.vbs.create_backup(project_id, cascaded_volume_id)
+        create_backup_job_detail_info = self._deal_with_job(create_backup_job_info, project_id,
+                            self._after_create_backup_success, self._after_create_backup_fail,
+                            cascading_volume_id=cascading_volume_id, cascaded_volume_id=cascaded_volume_id)
+        if create_backup_job_info:
+            backup_id = create_backup_job_detail_info['body']['entities']['backup_id']
+        else:
+            return Exception('Create tmp backup failed for cascading volume: %s' % cascading_volume_id)
+
+        LOG.debug("Create tmp backup success for cascading volume: %s" % cascading_volume_id)
         return backup_id
 
-    def create_image_from_backup(self):
-        cascaded_image_id = ''
+    def create_image_from_backup(self, backup_id, cascading_volume_id):
+        image_name = ''
+        description = 'image for volume: %s' % ''
+        job_info = self.hws_client.ims.create_image(image_name, description, backup_id)
+        create_image_success_detail_info = self._deal_with_job(job_info, self._after_create_image_from_backup_success,
+                                                               self._after_create_image_from_backup_fail,
+                                                               cascading_volume_id=cascading_volume_id)
+        if create_image_success_detail_info:
+            # TODO, structure of image_create_response is need to check
+            cascaded_image_id = create_image_success_detail_info['body']['entities']['image_id']
+        else:
+            raise Exception('Create tmp image failed for cascading volume: %s' % cascading_volume_id)
+
+        LOG.debug('Create tmp image success for cascading volume: %s' % cascading_volume_id)
+
         return cascaded_image_id
+
+    def _after_create_image_from_backup_success(self, detail_info, **kwargs):
+        if kwargs:
+            cascading_volume_id = kwargs['cascading_volume_id']
+            # TODO, structure of image_create_response is need to check
+            image_id = detail_info['body']['entities']['image_id']
+            if image_id:
+                self.db_manager.update_cascaded_image_in_volume_mapping(cascading_volume_id, image_id)
+                LOG.debug('update image_id: %s for cascading volume: %s' % (cascading_volume_id, image_id))
+            else:
+                error_info = 'Create image from backup failed. ERROR: %s' % json.dumps(detail_info)
+                LOG.error(error_info)
+                raise Exception(error_info)
+
+    def _after_create_image_from_backup_fail(self, detail_info, **kwargs):
+        cascading_volume_id = kwargs['cascading_volume_id']
+        error_info = 'Create image from backup failed for cascading volume: %s. ERROR: %s' %\
+                     (cascading_volume_id, json.dumps(detail_info))
+        LOG.error(error_info)
+        raise Exception(error_info)
 
     def get_cascaded_volume_backup(self, cascading_volume_id):
         return self.db_manager.get_cascaded_backup(cascading_volume_id)
@@ -276,18 +319,31 @@ class HwsComputeDriver(driver.ComputeDriver):
     def delete_cascaded_volume_backup_image(self, cascaded_volume_id):
         pass
 
-    def after_create_backup_success(self, create_back_job_detail_info, obj):
-        pass
+    def _after_create_backup_success(self, create_backup_job_detail_info, **kwargs):
+        if kwargs:
+            cascading_volume_id = kwargs.get('cascading_volume_id')
+            cascaded_volume_id = kwargs.get('cascaded_volume_id')
+            backup_id = create_backup_job_detail_info['body']['entities']['backup_id']
+            if backup_id:
+                self.db_manager.update_cascaded_backup_in_volume_mapping(cascading_volume_id, backup_id)
+            else:
+                raise Exception('Create backup failed: backup_id is None, error: %s' %
+                                json.dumps(create_backup_job_detail_info))
 
-    def after_create_backup_fail(self, create_back_job_detail_info, obj):
-        pass
+    def _after_create_backup_fail(self, create_backup_job_detail_info, **kwargs):
+        cascaded_volume_id = kwargs.get('cascaded_volume_id')
+        error_info = 'HWS create backup failed for volume: %s Error, EXCEPTION: %s' % (cascaded_volume_id, json.dumps(create_backup_job_detail_info))
+        LOG.error(error_info)
+        raise Exception(error_info)
 
     def _deal_with_job(self, job_info, project_id,
                        function_deal_with_success=None,
                        function_deal_with_fail=None,
-                       object=None):
+                       **kwargs):
         if job_info['status'] == 200:
             job_id = job_info['body']['job_id']
+            job_detail_info = None
+
             while True:
                 time.sleep(5)
                 job_detail_info = self.hws_client.vbs.get_job_detail(project_id, job_id)
@@ -299,12 +355,12 @@ class HwsComputeDriver(driver.ComputeDriver):
                             continue
                         elif job_status == 'FAIL':
                             if function_deal_with_fail:
-                                function_deal_with_fail(job_detail_info, object)
+                                function_deal_with_fail(job_detail_info, **kwargs)
                             error_info = 'job<%s> FAIL, ERROR INFO: %s' % (job_id, json.dumps(job_detail_info))
                             raise Exception(error_info)
                         elif job_status == 'SUCCESS':
                             if function_deal_with_success:
-                                function_deal_with_success(job_detail_info, object)
+                                function_deal_with_success(job_detail_info, **kwargs)
                             success_info = 'job<%s> SUCCESS.' % job_id
                             LOG.info(success_info)
                             break
@@ -325,6 +381,8 @@ class HwsComputeDriver(driver.ComputeDriver):
             error_info = json.dumps(job_info)
             LOG.error('Job init FAIL, error info: %s' % error_info)
             raise Exception(error_info)
+
+        return job_detail_info
 
     def _get_volume_source_image_id(self, context, volume_id):
         """
@@ -453,7 +511,7 @@ class HwsComputeDriver(driver.ComputeDriver):
         timer = loopingcall.FixedIntervalLoopingCall(_wait_for_boot)
         timer.start(interval=5).wait()
 
-    def spawn_from_image_for_volume(self, instance, image_id):
+    def spawn_from_image_for_volume(self, instance, image_id, cascading_volume_id):
         flavor = self._get_cascaded_flavor_id(instance)
         server_name = self._get_display_name(instance)
 
@@ -466,12 +524,65 @@ class HwsComputeDriver(driver.ComputeDriver):
         cascading_server_id = instance.uuid
         cascaded_server_id = self.db_manager.get_cascaded_server_id(cascading_server_id)
         if cascaded_server_id:
-            raise Exception('HWS server is already created, no need to create.')
+            info = 'HWS server for server: %s is already created, no need to create.' % instance.display_name
+            LOG.debug(info)
         else:
             created_job = self.hws_client.ecs.create_server(project_id, image_id, flavor,
                                                                 server_name, vpc_id, subnet_id_list, root_volume_type,
                                                                 availability_zone=az)
-            self._deal_with_job(created_job, project_id)
+            self._deal_with_job(created_job, project_id,
+                                self._after_spawn_from_image_success,
+                                self._after_spawn_from_image_fail,
+                                instance=instance, cascading_volume_id=cascading_volume_id)
+
+    def _after_spawn_from_image_fail(self, job_detail_info, **kwargs):
+        instance = kwargs.get('instance')
+        error_info = json.dumps(job_detail_info)
+        LOG.error('HWS Create Server: %s Error, EXCEPTION: %s' % (instance.display_name, error_info))
+        raise Exception(error_info)
+
+
+    def _after_spawn_from_image_success(self, job_detail_info, **kwargs):
+        instance = kwargs.get('instance')
+        server_name = instance.display_name
+        cascading_volume_id = kwargs.get('cascading_volume_id')
+        cascaded_backup_id = self.db_manager.get_cascaded_backup(cascading_volume_id)
+        cascaded_image_id = self.db_manager.get_cascaded_backup_image(cascading_volume_id)
+
+        server_id = job_detail_info['body']['entities']['sub_jobs'][0]["entities"]['server_id']
+        LOG.info('Add hws server id: %s' % server_id)
+        if server_id:
+            LOG.debug('HWS add server id mapping, cascading id: %s, cascaded id: %s' %
+                     (instance.uuid, server_id))
+            self.db_manager.add_server_id_mapping(instance.uuid, server_id)
+            self.db_manager.add_server_id_name_mapping(instance.uuid, server_name)
+            if cascaded_backup_id:
+                self._delete_cascaded_backup(cascaded_backup_id)
+            if cascaded_image_id:
+                self._delete_cascaded_image(cascaded_image_id)
+        else:
+            error_info = 'No server id found for cascading id: %s, server: %s' % (instance.uuid, server_name)
+            LOG.error(error_info)
+            raise Exception('HWS Create Server Error, EXCEPTION: %s' % error_info)
+
+    def _delete_cascaded_backup(self, backup_id):
+        job_delete_backup_info = self.hws_client.vbs.delete_backup(self.project, backup_id)
+        try:
+            job_delete_success_detail_info = self._deal_with_job(job_delete_backup_info, self.project)
+        except Exception, e:
+            #TODO: Add a backend job to scan failed delete task.
+            error_info = 'Delete tmp backup: %s failed, Exception: %s' % (backup_id, traceback.format_exc())
+            LOG.error(error_info)
+
+
+    def _delete_cascaded_image(self, image_id):
+        job_delete_image_info = self.hws_client.ims.delete_image(image_id)
+        try:
+            job_delete_image_detail_info = self._deal_with_job(job_delete_image_info, self.project)
+        except Exception, e:
+            #TODO: Add a backend job to scan failed delete task.
+            error_info = 'Delete tmp image: %s failed, Exception: %s' % (image_id, traceback.format_exc())
+            LOG.error(error_info)
 
     def _get_cascaded_flavor_id(self, instance):
         if instance.get('system_metadata'):
@@ -481,7 +592,9 @@ class HwsComputeDriver(driver.ComputeDriver):
                 flavor = cascaded_flavor_id
             else:
                 flavor = CONF.hws.flavor_id
-        LOG.info('FLAVOR: %s' % flavor)
+        else:
+            raise Exception('No system_metadata for instance: %s' % instance.display_name)
+        LOG.debug('FLAVOR: %s' % flavor)
 
         return flavor
 
@@ -497,7 +610,6 @@ class HwsComputeDriver(driver.ComputeDriver):
 
     def _get_display_name(self, instance):
         original_display_name = instance.display_name
-        display_name = ""
         if len(original_display_name) < 64:
             display_name = original_display_name
         else:
@@ -510,10 +622,242 @@ class HwsComputeDriver(driver.ComputeDriver):
 
     def attach_volume(self, context, connection_info, instance, mountpoint,
                     disk_bus=None, device_type=None, encryption=None):
+        """
+
+
+        :param context:
+            ['auth_token',
+            'elevated',
+            'from_dict',
+            'instance_lock_checked',
+            'is_admin',
+            'project_id',
+            'project_name',
+            'quota_class',
+            'read_deleted',
+            'remote_address',
+            'request_id',
+            'roles',
+            'service_catalog',
+            'tenant',
+            'timestamp',
+            'to_dict',
+            'update_store',
+            'user',
+            'user_id',
+            'user_name']
+        :param connection_info:
+            {
+                u'driver_volume_type': u'vcloud_volume',
+                'serial': u'824d397e-4138-48e4-b00b-064cf9ef4ed8',
+                u'data': {
+                    u'access_mode': u'rw',
+                    u'qos_specs': None,
+                    u'display_name': u'volume_02',
+                    u'volume_id': u'824d397e-4138-48e4-b00b-064cf9ef4ed8',
+                    u'backend': u'vcloud'
+                }
+            }
+        :param instance:
+        Instance(
+            access_ip_v4=None,
+            access_ip_v6=None,
+            architecture=None,
+            auto_disk_config=False,
+            availability_zone='az01.hws--fusionsphere',
+            cell_name=None,
+            cleaned=False,
+            config_drive='',
+            created_at=2016-01-14T07: 17: 40Z,
+            default_ephemeral_device=None,
+            default_swap_device=None,
+            deleted=False,
+            deleted_at=None,
+            disable_terminate=False,
+            display_description='volume_backend_01',
+            display_name='volume_backend_01',
+            ephemeral_gb=0,
+            ephemeral_key_uuid=None,
+            fault=<?>,
+            host='420824B8-AC4B-7A64-6B8D-D5ACB90E136A',
+            hostname='volume-backend-01',
+            id=57,
+            image_ref='',
+            info_cache=InstanceInfoCache,
+            instance_type_id=2,
+            kernel_id='',
+            key_data=None,
+            key_name=None,
+            launch_index=0,
+            launched_at=2016-01-14T07: 17: 43Z,
+            launched_on='420824B8-AC4B-7A64-6B8D-D5ACB90E136A',
+            locked=False,
+            locked_by=None,
+            memory_mb=512,
+            metadata={
+
+            },
+            node='420824B8-AC4B-7A64-6B8D-D5ACB90E136A',
+            numa_topology=<?>,
+            os_type=None,
+            pci_devices=<?>,
+            power_state=0,
+            progress=0,
+            project_id='e178f1b9539b4a02a9c849dd7ea3ea9e',
+            ramdisk_id='',
+            reservation_id='r-marvoq8g',
+            root_device_name='/dev/sda',
+            root_gb=1,
+            scheduled_at=None,
+            security_groups=SecurityGroupList,
+            shutdown_terminate=False,
+            system_metadata={
+                image_base_image_ref='',
+                image_checksum='d972013792949d0d3ba628fbe8685bce',
+                image_container_format='bare',
+                image_disk_format='qcow2',
+                image_image_id='617e72df-41ba-4e0d-ac88-cfff935a7dc3',
+                image_image_name='cirros',
+                image_min_disk='0',
+                image_min_ram='0',
+                image_size='13147648',
+                instance_type_ephemeral_gb='0',
+                instance_type_flavorid='1',
+                instance_type_id='2',
+                instance_type_memory_mb='512',
+                instance_type_name='m1.tiny',
+                instance_type_root_gb='1',
+                instance_type_rxtx_factor='1.0',
+                instance_type_swap='0',
+                instance_type_vcpu_weight=None,
+                instance_type_vcpus='1'
+            },
+            task_state=None,
+            terminated_at=None,
+            updated_at=2016-01-14T07: 17: 43Z,
+            user_data=u'<SANITIZED>,
+            user_id='d38732b0a8ff451eb044015e80bbaa65',
+            uuid=9eef20f0-5ebf-4793-b4a2-5a667b0acad0,
+            vcpus=1,
+            vm_mode=None,
+            vm_state='active')
+
+        Volume object:
+        {
+            'status': u'attaching',
+            'volume_type_id': u'type01',
+            'volume_image_metadata': {
+                u'container_format': u'bare',
+                u'min_ram': u'0',
+                u'disk_format': u'qcow2',
+                u'image_name': u'cirros',
+                u'image_id': u'617e72df-41ba-4e0d-ac88-cfff935a7dc3',
+                u'checksum': u'd972013792949d0d3ba628fbe8685bce',
+                u'min_disk': u'0',
+                u'size': u'13147648'
+            },
+            'display_name': u'volume_02',
+            'attachments': [],
+            'attach_time': '',
+            'availability_zone': u'az01.hws--fusionsphere',
+            'bootable': True,
+            'created_at': u'2016-01-18T07: 03: 57.822386',
+            'attach_status': 'detached',
+            'display_description': None,
+            'volume_metadata': {
+                u'readonly': u'False'
+            },
+            'shareable': u'false',
+            'snapshot_id': None,
+            'mountpoint': '',
+            'id': u'824d397e-4138-48e4-b00b-064cf9ef4ed8',
+            'size': 120
+        }
+        :param mountpoint: string. e.g. "/dev/sdb"
+        :param disk_bus:
+        :param device_type:
+        :param encryption:
+        :return:
+        """
+        cascading_volume_id = connection_info['data']['volume_id']
+        cascaded_volume_id = self.db_manager.get_cascaded_volume_id(cascading_volume_id)
+        device_name = mountpoint
+        cascaded_server_id = self._get_cascaded_server_id(instance)
+        if not cascaded_server_id:
+            raise Exception('No hws server mapping for cascading server: %s' % instance.uuid)
+
+        if cascaded_volume_id:
+            self._attach_volume(self.project, cascaded_server_id, cascaded_volume_id, device_name, cascading_volume_id)
+        else:
+            image_id = self._get_volume_source_image_id(context, cascading_volume_id)
+            volume_obj = self.cinder_api.get(context, cascading_volume_id)
+            size = volume_obj.size
+            volume_type = volume_obj.volume_type_id
+
+            if volume_type not in SUPPORT_VOLUME_TYPE:
+                volume_type = SATA
+
+            name = volume_obj.display_name
+
+            availability_zone = CONF.hws.resource_region
+
+            if image_id:
+                job_info = self.hws_client.evs.create_volume(self.project, availability_zone, size, volume_type,
+                                                  name=name, imageRef=image_id)
+                job_detail_info = self._deal_with_job(job_info, self.project,
+                                    self._after_create_volume_success,
+                                    self._after_create_volume_fail, cascading_volume_id=cascading_volume_id)
+                cascaded_volume_id = job_detail_info['body']['entities']['volume_id']
+                self._attach_volume(self.project, cascaded_server_id, cascaded_volume_id, device_name, cascading_volume_id)
+
+    def _attach_volume(self, project, server_id, volume_id, device_name, cascading_volume_id):
+        """
+
+        :param project: string, hws project id
+        :param server_id: string, hws server id
+        :param volume_id: string, hws volume id
+        :param device_name: device name, e.g. '/dev/sdb'
+        :param cascading_volume_id:  string, cascading volume id
+        :return:
+        """
+        job_attach_volume = self.hws_client.ecs.attach_volume(project, server_id, volume_id, device_name)
+        job_attach_volume_success_detail = self._deal_with_job(job_attach_volume, project)
+        LOG.debug('Attach volume success for server: %s, volume: %s' % (server_id, cascading_volume_id))
+
+    def _after_attach_volume_success(self, job_detail_info, **kwargs):
         pass
+
+    def _after_attach_volume_fail(self, job_detail_info, **kwargs):
+        pass
+
+    def _after_create_volume_success(self, job_detail_info, **kwargs):
+        cascading_volume_id = kwargs['cascading_volume_id']
+
+        cascaded_volume_id = job_detail_info['body']['entities']['volume_id']
+        self.db_manager.add_volume_mapping(cascading_volume_id, cascaded_volume_id)
+        LOG.debug('add volume mapping for cascading_volume_id: %s, cascaded_volume_id: %s' %
+                  (cascading_volume_id, cascaded_volume_id))
+
+    def _after_create_volume_fail(self, job_detail_info, **kwargs):
+        cascading_volume_id = kwargs['cascading_volume_id']
+        error_info = 'fail to create volume for cascading volume: %s, error: %s' %\
+                     (cascading_volume_id, json.dumps(job_detail_info))
+        LOG.error(error_info)
+        raise Exception(error_info)
 
     def destroy(self, context, instance, network_info, block_device_info=None,
                 destroy_disks=True, migrate_data=None):
+        """
+        :param instance:
+        :param network_info:
+        :param block_device_info:
+        :param destroy_disks:
+        :param migrate_data:
+        :return:
+        """
+        # TODO: currently, no matter the server is create by image or volume, delete directly.
+        # But for server created by volume, some condition when delete server, the system volume need to remain.
+        # so here need a TODO.
         try:
             cascading_server_id = instance.uuid
             cascaded_server_id = self.db_manager.get_cascaded_server_id(cascading_server_id)
@@ -528,7 +872,7 @@ class HwsComputeDriver(driver.ComputeDriver):
                 delete_server_list = []
                 delete_server_list.append(cascaded_server_id)
                 delete_job_result = self.hws_client.ecs.delete_server(project_id, delete_server_list,
-                                                                      True, destroy_disks)
+                                                                      True, True)
                 self._deal_java_error(delete_job_result)
             else:
                 # if there is no mapped cascaded server id, means there is no cascaded server
@@ -578,7 +922,36 @@ class HwsComputeDriver(driver.ComputeDriver):
 
     def detach_volume(self, connection_info, instance, mountpoint,
                       encryption=None):
-        """Detach the disk attached to the instance."""
+        """
+        Detach the disk attached to the instance.
+
+        :param connection_info:
+        {
+            u'driver_volume_type': u'vcloud_volume',
+            u'serial': u'824d397e-4138-48e4-b00b-064cf9ef4ed8',
+            u'data': {
+                u'backend': u'vcloud',
+                u'qos_specs': None,
+                u'access_mode': u'rw',
+                u'display_name': u'volume_02',
+                u'volume_id': u'824d397e-4138-48e4-b00b-064cf9ef4ed8'
+            }
+        }
+        :param instance:
+        :param mountpoint: string, e.g. '/dev/sdb'
+        :param encryption:
+        :return:
+        """
+        cascading_volume_id = connection_info['data']['volume_id']
+        cascaded_volume = self.db_manager.get_cascaded_volume_id(cascading_volume_id)
+        if cascaded_volume:
+            job_detach_volume = self.hws_client.ecs.detach_volume(self.project, instance.uuid, cascaded_volume)
+            self._deal_with_job(job_detach_volume, self.project)
+
+    def after_detach_volume_success(self, job_detail_info, **kwargs):
+        pass
+
+    def after_detach_volume_fail(self, job_detail_info, **kwargs):
         pass
 
     def get_available_nodes(self, refresh=False):

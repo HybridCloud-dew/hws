@@ -60,11 +60,11 @@ class VBSService(HWSService):
         request_body_string = json.dumps(request_body)
         response = self.post(uri, request_body_string)
 
-        return json.loads(response)
+        return response
 
     def delete_backup(self, project_id, backup_id):
         uri = '/v2/%s/cloudbackups/%s' % (project_id, backup_id)
         response = self.delete(uri)
 
-        return json.loads(response)
+        return response
 

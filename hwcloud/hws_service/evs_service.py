@@ -128,7 +128,7 @@ class EVSService(HWSService):
 
         response = self.post(uri, request_body_string)
 
-        return json.loads(response)
+        return response
 
     def delete_volume(self, project_id, volume_id):
         """
@@ -139,11 +139,11 @@ class EVSService(HWSService):
         uri = '/v2/%s/cloudvolumes/%s' % (project_id, volume_id)
         response = self.delete(uri)
 
-        return json.loads(response)
+        return response
 
     def get_volume_detail(self, project_id, volume_id):
         uri = "/v2/%s/volumes/%s" % (project_id, volume_id)
 
         response = self.get(uri)
 
-        return json.loads(response)
+        return response

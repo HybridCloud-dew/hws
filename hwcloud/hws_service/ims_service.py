@@ -11,7 +11,7 @@ class IMSService(HWSService):
 
     def list(self, project_id):
         uri = '/v2/images'
-        return json.loads(self.get(uri))
+        return self.get(uri)
 
     def create_image(self, name, description, instance_id=None, backup_id=None):
         """
@@ -44,10 +44,10 @@ class IMSService(HWSService):
 
         response = self.post(uri, request_body_string)
 
-        return json.loads(response)
+        return response
 
     def delete_image(self, image_id):
         uri = '/v2/images/%s' % image_id
         response = self.delete(uri)
 
-        return json.loads(response)
+        return response

@@ -2,8 +2,33 @@ __author__ = 'Administrator'
 
 from urlparse import urljoin
 import json
+import time
 
 from hwcloud.java_gateway import HWSRestMethod
+
+def retry(times, interval):
+
+    def _wrapper(f):
+        def __wrapper(*args, **kwargs):
+            timer = 0
+            while(True):
+                response = f(*args, **kwargs)
+                if response['status'] == 'error':
+                    if timer < times:
+                        timer += 1
+                        time.sleep(interval)
+                        continue
+                    else:
+                        return response
+                else:
+                    return response
+        return __wrapper
+    return _wrapper
+
+RETRY_TIMES = 3
+
+#interval seconds
+RETRY_INTERVAL = 1
 
 class HWSService(object):
     def __init__(self, ak, sk, service_name, region, protocol, host, port):
@@ -22,17 +47,20 @@ class HWSService(object):
     def composite_full_uri(self, api_uri):
         return urljoin(self.uri_prefix, api_uri)
 
+    @retry(RETRY_TIMES, RETRY_INTERVAL)
     def get(self, uri):
         request_url = self.composite_full_uri(uri)
-        return HWSRestMethod.get(self.ak, self.sk, request_url, self.service_name, self.region)
+        return json.loads(HWSRestMethod.get(self.ak, self.sk, request_url, self.service_name, self.region))
 
+    @retry(RETRY_TIMES, RETRY_INTERVAL)
     def post(self, uri, body):
         request_url = self.composite_full_uri(uri)
-        return HWSRestMethod.post(self.ak, self.sk, request_url, body, self.service_name, self.region)
+        return json.loads(HWSRestMethod.post(self.ak, self.sk, request_url, body, self.service_name, self.region))
 
+    @retry(RETRY_TIMES, RETRY_INTERVAL)
     def delete(self, uri):
         request_url = self.composite_full_uri(uri)
-        return HWSRestMethod.delete(self.ak, self.sk, request_url, self.service_name, self.region)
+        return json.loads(HWSRestMethod.delete(self.ak, self.sk, request_url, self.service_name, self.region))
 
     def convertDictOptsToString(self, opts):
         str_opts = ""
@@ -47,4 +75,4 @@ class HWSService(object):
     def get_job_detail(self, project_id, job_id):
         uri = '/v1/%s/jobs/%s' % (project_id, job_id)
 
-        return json.loads(self.get(uri))
+        return self.get(uri)

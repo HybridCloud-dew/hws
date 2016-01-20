@@ -31,7 +31,7 @@ class VPCService(HWSService):
         if opts:
             str_opts = self.convertDictOptsToString(opts)
             uri = '?'.join([uri, str_opts])
-        return json.loads(self.get(uri))
+        return self.get(uri)
 
     def list_vpc_detail(self, project_id, vpc_id):
         """
@@ -52,7 +52,7 @@ class VPCService(HWSService):
         }
         """
         uri = "/v1/%s/vpcs/%s" % (project_id, vpc_id)
-        return json.loads(self.get(uri))
+        return self.get(uri)
 
     def list_subnet(self, project_id, opts=None):
         """
@@ -106,7 +106,7 @@ class VPCService(HWSService):
         if opts:
             str_opts = self.convertDictOptsToString(opts)
             uri = '?'.join([uri, str_opts])
-        return json.loads(self.get(uri))
+        return self.get(uri)
 
     def list_subnet_detail(self, project_id, subnet_id):
         """
@@ -133,7 +133,7 @@ class VPCService(HWSService):
         }
         """
         uri = "/v1/%s/subnets/%s" % (project_id, subnet_id)
-        return json.loads(self.get(uri))
+        return self.get(uri)
 
     def create_subnet(self, project_id, name, cidr, availability_zone, vpc_id,
                       gateway_ip=None, dhcp_enable=None, primary_dns=None, secondary_dns=None):
@@ -169,7 +169,7 @@ class VPCService(HWSService):
 
         request_body_string = json.dumps(request_body_dict)
 
-        return json.loads(self.post(uri, request_body_string))
+        return self.post(uri, request_body_string)
 
 
 

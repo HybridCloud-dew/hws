@@ -37,14 +37,14 @@ class ECSService(HWSService):
         if opts:
             str_opts = self.convertDictOptsToString(opts)
             uri = '?'.join([uri, str_opts])
-        return json.loads(self.get(uri))
+        return self.get(uri)
 
     def list_detail(self, project_id, opts=None):
         uri = "/v1/%s/servers/detail" % project_id
         if opts:
             str_opts = self.convertDictOptsToString(opts)
             uri = '?'.join([uri, str_opts])
-        return json.loads(self.get(uri))
+        return self.get(uri)
 
     def get_detail(self, project_id, server_id):
         """
@@ -54,7 +54,7 @@ class ECSService(HWSService):
         :return:
         """
         uri = '/v1/%s/servers/%s' % (project_id, server_id)
-        return json.loads(self.get(uri))
+        return self.get(uri)
 
     def create_server(self, project_id, image_ref, flavor_ref, name, vpcid, nics_subnet_list, root_volume_type,
                       personality_path=None, personality_contents=None, adminPass=None, public_ip_id=None, count=None,
@@ -203,7 +203,7 @@ class ECSService(HWSService):
         request_body_string = json.dumps(request_body_dict)
         response = self.post(uri, request_body_string)
 
-        return json.loads(response)
+        return response
 
     def list_flavors(self, project_id):
         """
@@ -237,7 +237,7 @@ class ECSService(HWSService):
         }
         """
         uri =  "/v1/%s/cloudservers/flavors" % project_id
-        return json.loads(self.get(uri))
+        return self.get(uri)
 
     def delete_server(self, project_id, server_id_list, delete_public_ip, delete_volume):
         """
@@ -270,7 +270,7 @@ class ECSService(HWSService):
         request_body_string = json.dumps(request_body_dict)
         response = self.post(uri, request_body_string)
 
-        return json.loads(response)
+        return response
 
     def stop_server(self, project_id, server_id):
         uri = '/v1/%s/servers/%s/action' % (project_id, server_id)
@@ -279,7 +279,7 @@ class ECSService(HWSService):
         request_body_string = json.dumps(request_body_dict)
         response = self.post(uri, request_body_string)
 
-        return json.loads(response)
+        return response
 
     def stop_servers(self, project_id, servers_list):
         pass
@@ -291,7 +291,7 @@ class ECSService(HWSService):
         request_body_string = json.dumps(request_body_dict)
         response = self.post(uri, request_body_string)
 
-        return json.loads(response)
+        return response
 
     def reboot_hard(self, project_id, server_id):
         return self.reboot(project_id, server_id, "HARD")
@@ -316,7 +316,7 @@ class ECSService(HWSService):
         request_body_string = json.dumps(request_body_dict)
         response = self.post(uri, request_body_string)
 
-        return json.loads(response)
+        return response
 
     def attach_volume(self, project_id, server_id, volume_id, device_name):
         uri = 'v1/%s/cloudservers/%s/attachvolume' % (project_id, server_id)
@@ -328,10 +328,10 @@ class ECSService(HWSService):
         request_body_string = json.dumps(request_body)
         response = self.post(uri, request_body_string)
 
-        return json.loads(response)
+        return response
 
     def detach_volume(self, project_id, server_id, attachment_id):
         uri = '/v1/%s/cloudservers/%s/detachvolume/%s' % (project_id, server_id, attachment_id)
         response = self.delete(uri)
 
-        return json.loads(response)
+        return response

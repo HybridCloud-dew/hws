@@ -805,9 +805,11 @@ class HwsComputeDriver(driver.ComputeDriver):
 
             availability_zone = CONF.hws.resource_region
 
-            if image_id:
+            cascaded_image_id = self.db_manager.get_cascaded_image_id(image_id)
+
+            if cascaded_image_id:
                 job_info = self.hws_client.evs.create_volume(self.project, availability_zone, size, volume_type,
-                                                  name=name, imageRef=image_id)
+                                                  name=name, imageRef=cascaded_image_id)
                 job_detail_info = self._deal_with_job(job_info, self.project,
                                     self._after_create_volume_success,
                                     self._after_create_volume_fail, cascading_volume_id=cascading_volume_id)

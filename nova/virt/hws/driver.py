@@ -494,8 +494,12 @@ class HwsComputeDriver(driver.ComputeDriver):
                 elif job_status_ac == "RUNNING":
                     LOG.debug('Job for creating server: %s is still RUNNING.' % server_name)
                     pass
+                elif job_status_ac == "INIT":
+                    LOG.debug('JOB for createing server: %s is init' % server_name)
+                    pass
                 else:
-                    raise Exception(job_current_info)
+                    LOG.debug('JOB status is %s' % job_status_ac)
+                    pass
             elif job_current_info and job_current_info['status'] == 'error':
                 try:
                     self._deal_java_error(job_current_info)

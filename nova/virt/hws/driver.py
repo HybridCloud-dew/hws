@@ -795,13 +795,13 @@ class HwsComputeDriver(driver.ComputeDriver):
         else:
             image_id = self._get_volume_source_image_id(context, cascading_volume_id)
             volume_obj = self.cinder_api.get(context, cascading_volume_id)
-            size = volume_obj.size
-            volume_type = volume_obj.volume_type_id
+            size = volume_obj.get('size')
+            volume_type = volume_obj.get('volume_type_id')
 
             if volume_type not in SUPPORT_VOLUME_TYPE:
                 volume_type = SATA
 
-            name = volume_obj.display_name
+            name = volume_obj.get('display_name')
 
             availability_zone = CONF.hws.resource_region
 

@@ -2398,7 +2398,6 @@ class ComputeManager(manager.Manager):
 
         # NOTE(melwitt): attempt driver destroy before releasing ip, may
         #                want to keep ip allocated for certain failures
-        LOG.info('Nash, destroy')
         try:
             self.driver.destroy(context, instance, network_info,
                     block_device_info)

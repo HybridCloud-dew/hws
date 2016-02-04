@@ -79,7 +79,6 @@ class HwsComputeDriver(driver.ComputeDriver):
         port = "443"
         self.project = CONF.hws.project_id
         self.hws_client = HWSClient(gong_yao, si_yao, region, protocol, port)
-        self.db_manager = DatabaseManager()
         self.cinder_api = cinder_api()
 
     def _transfer_to_host_server_name(self, instance_uuid):
@@ -226,7 +225,8 @@ class HwsComputeDriver(driver.ComputeDriver):
         if not instance.image_ref and len(bdms) > 0:
             volume_ids, bootable_volume_id = self._get_volume_ids_from_bdms(bdms)
             if bootable_volume_id:
-                cascaded_volume_id = self.db_manager.get_cascaded_volume_id(bootable_volume_id)
+                db_manager = DatabaseManager()
+                cascaded_volume_id = db_manager.get_cascaded_volume_id(bootable_volume_id)
                 # if cascaded volume already been created, then the data maybe changed, so cann't be created from image.
                 if cascaded_volume_id:
                     LOG.info('Cascaded volume exist, need to transfer to image then create server from new image')
@@ -296,7 +296,8 @@ class HwsComputeDriver(driver.ComputeDriver):
             # TODO, structure of image_create_response is need to check
             image_id = detail_info['body']['entities']['image_id']
             if image_id:
-                self.db_manager.update_cascaded_image_in_volume_mapping(cascading_volume_id, image_id)
+                db_manager = DatabaseManager()
+                db_manager.update_cascaded_image_in_volume_mapping(cascading_volume_id, image_id)
                 LOG.debug('update image_id: %s for cascading volume: %s' % (cascading_volume_id, image_id))
             else:
                 error_info = 'Create image from backup failed. ERROR: %s' % json.dumps(detail_info)
@@ -311,10 +312,12 @@ class HwsComputeDriver(driver.ComputeDriver):
         raise Exception(error_info)
 
     def get_cascaded_volume_backup(self, cascading_volume_id):
-        return self.db_manager.get_cascaded_backup(cascading_volume_id)
+        db_manager = DatabaseManager()
+        return db_manager.get_cascaded_backup(cascading_volume_id)
 
     def get_cascaded_backup_image(self, cascading_volume_id):
-        return self.db_manager.get_cascaded_backup_image(cascading_volume_id)
+        db_manager = DatabaseManager()
+        return db_manager.get_cascaded_backup_image(cascading_volume_id)
 
     def delete_cascaded_volume_backup_image(self, cascaded_volume_id):
         pass
@@ -325,7 +328,8 @@ class HwsComputeDriver(driver.ComputeDriver):
             cascaded_volume_id = kwargs.get('cascaded_volume_id')
             backup_id = create_backup_job_detail_info['body']['entities']['backup_id']
             if backup_id:
-                self.db_manager.update_cascaded_backup_in_volume_mapping(cascading_volume_id, backup_id)
+                db_manager = DatabaseManager()
+                db_manager.update_cascaded_backup_in_volume_mapping(cascading_volume_id, backup_id)
             else:
                 raise Exception('Create backup failed: backup_id is None, error: %s' %
                                 json.dumps(create_backup_job_detail_info))
@@ -480,8 +484,9 @@ class HwsComputeDriver(driver.ComputeDriver):
                     if server_id:
                         LOG.info('HWS add server id mapping, cascading id: %s, cascaded id: %s' %
                                  (instance.uuid, server_id))
-                        self.db_manager.add_server_id_mapping(instance.uuid, server_id)
-                        self.db_manager.add_server_id_name_mapping(instance.uuid, server_name)
+                        db_manager = DatabaseManager()
+                        db_manager.add_server_id_mapping(instance.uuid, server_id)
+                        db_manager.add_server_id_name_mapping(instance.uuid, server_name)
                     else:
                         error_info = 'No server id found for cascading id: %s, server: %s' % (instance.uuid, server_name)
                         LOG.error(error_info)
@@ -526,7 +531,8 @@ class HwsComputeDriver(driver.ComputeDriver):
         root_volume_type = "SATA"
         az = CONF.hws.resource_region
         cascading_server_id = instance.uuid
-        cascaded_server_id = self.db_manager.get_cascaded_server_id(cascading_server_id)
+        db_manager = DatabaseManager()
+        cascaded_server_id = db_manager.get_cascaded_server_id(cascading_server_id)
         if cascaded_server_id:
             info = 'HWS server for server: %s is already created, no need to create.' % instance.display_name
             LOG.debug(info)
@@ -550,16 +556,17 @@ class HwsComputeDriver(driver.ComputeDriver):
         instance = kwargs.get('instance')
         server_name = instance.display_name
         cascading_volume_id = kwargs.get('cascading_volume_id')
-        cascaded_backup_id = self.db_manager.get_cascaded_backup(cascading_volume_id)
-        cascaded_image_id = self.db_manager.get_cascaded_backup_image(cascading_volume_id)
+        db_manager = DatabaseManager()
+        cascaded_backup_id = db_manager.get_cascaded_backup(cascading_volume_id)
+        cascaded_image_id = db_manager.get_cascaded_backup_image(cascading_volume_id)
 
         server_id = job_detail_info['body']['entities']['sub_jobs'][0]["entities"]['server_id']
         LOG.info('Add hws server id: %s' % server_id)
         if server_id:
             LOG.debug('HWS add server id mapping, cascading id: %s, cascaded id: %s' %
                      (instance.uuid, server_id))
-            self.db_manager.add_server_id_mapping(instance.uuid, server_id)
-            self.db_manager.add_server_id_name_mapping(instance.uuid, server_name)
+            db_manager.add_server_id_mapping(instance.uuid, server_id)
+            db_manager.add_server_id_name_mapping(instance.uuid, server_name)
             if cascaded_backup_id:
                 self._delete_cascaded_backup(cascaded_backup_id)
             if cascaded_image_id:
@@ -591,7 +598,8 @@ class HwsComputeDriver(driver.ComputeDriver):
     def _get_cascaded_flavor_id(self, instance):
         if instance.get('system_metadata'):
             cascading_flavor_id = instance.get('system_metadata').get('instance_type_flavorid')
-            cascaded_flavor_id = self.db_manager.get_cascaded_flavor_id(cascading_flavor_id)
+            db_manager = DatabaseManager()
+            cascaded_flavor_id = db_manager.get_cascaded_flavor_id(cascading_flavor_id)
             if cascaded_flavor_id:
                 flavor = cascaded_flavor_id
             else:
@@ -604,7 +612,8 @@ class HwsComputeDriver(driver.ComputeDriver):
 
     def _get_cascaded_image_id(self, instance):
         cascading_image_id = instance.image_ref
-        cascaded_image_id = self.db_manager.get_cascaded_image_id(cascading_image_id)
+        db_manager = DatabaseManager()
+        cascaded_image_id = db_manager.get_cascaded_image_id(cascading_image_id)
         if cascaded_image_id:
             image_id = cascaded_image_id
         else:
@@ -784,7 +793,8 @@ class HwsComputeDriver(driver.ComputeDriver):
         :return:
         """
         cascading_volume_id = connection_info['data']['volume_id']
-        cascaded_volume_id = self.db_manager.get_cascaded_volume_id(cascading_volume_id)
+        db_manager = DatabaseManager()
+        cascaded_volume_id = db_manager.get_cascaded_volume_id(cascading_volume_id)
         device_name = mountpoint
         cascaded_server_id = self._get_cascaded_server_id(instance)
         if not cascaded_server_id:
@@ -805,7 +815,7 @@ class HwsComputeDriver(driver.ComputeDriver):
 
             availability_zone = CONF.hws.resource_region
 
-            cascaded_image_id = self.db_manager.get_cascaded_image_id(image_id)
+            cascaded_image_id = db_manager.get_cascaded_image_id(image_id)
 
             if cascaded_image_id:
                 job_info = self.hws_client.evs.create_volume(self.project, availability_zone, size, volume_type,
@@ -840,7 +850,8 @@ class HwsComputeDriver(driver.ComputeDriver):
         cascading_volume_id = kwargs['cascading_volume_id']
 
         cascaded_volume_id = job_detail_info['body']['entities']['volume_id']
-        self.db_manager.add_volume_mapping(cascading_volume_id, cascaded_volume_id)
+        db_manager = DatabaseManager()
+        db_manager.add_volume_mapping(cascading_volume_id, cascaded_volume_id)
         LOG.debug('add volume mapping for cascading_volume_id: %s, cascaded_volume_id: %s' %
                   (cascading_volume_id, cascaded_volume_id))
 
@@ -866,7 +877,8 @@ class HwsComputeDriver(driver.ComputeDriver):
         # so here need a TODO.
         try:
             cascading_server_id = instance.uuid
-            cascaded_server_id = self.db_manager.get_cascaded_server_id(cascading_server_id)
+            db_manager = DatabaseManager()
+            cascaded_server_id = db_manager.get_cascaded_server_id(cascading_server_id)
             if cascaded_server_id:
                 project_id = CONF.hws.project_id
                 cascaded_server_detail = self.hws_client.ecs.get_detail(project_id, cascaded_server_id)
@@ -896,8 +908,9 @@ class HwsComputeDriver(driver.ComputeDriver):
             if job_current_info and job_current_info['status'] == 200:
                 job_status_ac = job_current_info['body']['status']
                 if job_status_ac == 'SUCCESS':
-                    self.db_manager.delete_server_id_by_cascading_id(cascading_server_id)
-                    self.db_manager.delete_server_id_name_by_cascading_id(cascading_server_id)
+                    db_manager = DatabaseManager()
+                    db_manager.delete_server_id_by_cascading_id(cascading_server_id)
+                    db_manager.delete_server_id_name_by_cascading_id(cascading_server_id)
                     raise loopingcall.LoopingCallDone()
                 elif job_status_ac == 'FAIL':
                     error_info = json.dumps(job_current_info)
@@ -949,8 +962,9 @@ class HwsComputeDriver(driver.ComputeDriver):
         :return:
         """
         cascading_volume_id = connection_info['data']['volume_id']
-        cascaded_volume = self.db_manager.get_cascaded_volume_id(cascading_volume_id)
-        cascaded_server_id = self.db_manager.get_cascaded_server_id(instance.uuid)
+        db_manager = DatabaseManager()
+        cascaded_volume = db_manager.get_cascaded_volume_id(cascading_volume_id)
+        cascaded_server_id = db_manager.get_cascaded_server_id(instance.uuid)
         if not cascaded_server_id:
             error_info = 'Not exist cascaded server in hwclouds for server: %s.' % instance.uuid
 
@@ -1112,7 +1126,8 @@ class HwsComputeDriver(driver.ComputeDriver):
 
     def _get_cascaded_server_id(self, instance):
         cascading_server_id = instance.uuid
-        cascaded_server_id = self.db_manager.get_cascaded_server_id(cascading_server_id)
+        db_manager = DatabaseManager()
+        cascaded_server_id = db_manager.get_cascaded_server_id(cascading_server_id)
 
         return cascaded_server_id
 

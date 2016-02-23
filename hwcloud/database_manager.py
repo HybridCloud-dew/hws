@@ -109,7 +109,6 @@ class DatabaseManager(object):
         if DatabaseManager.conn:
             DatabaseManager.conn.commit()
 
-
     def init_database(self):
         self.create_table_server_id_mapping()
         self.create_table_server_id_name_mapping()

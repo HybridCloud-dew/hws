@@ -33,14 +33,14 @@ class ECSService(HWSService):
             u'status': 200
         }
         """
-        uri = "v1/%s/servers" % project_id
+        uri = "v2/%s/servers" % project_id
         if opts:
             str_opts = self.convertDictOptsToString(opts)
             uri = '?'.join([uri, str_opts])
         return self.get(uri)
 
     def list_detail(self, project_id, opts=None):
-        uri = "/v1/%s/servers/detail" % project_id
+        uri = "/v2/%s/servers/detail" % project_id
         if opts:
             str_opts = self.convertDictOptsToString(opts)
             uri = '?'.join([uri, str_opts])
@@ -53,7 +53,7 @@ class ECSService(HWSService):
         :param server_id:
         :return:
         """
-        uri = '/v1/%s/servers/%s' % (project_id, server_id)
+        uri = '/v2/%s/servers/%s' % (project_id, server_id)
         return self.get(uri)
 
     def create_server(self, project_id, image_ref, flavor_ref, name, vpcid, nics_subnet_list, root_volume_type,
@@ -273,7 +273,7 @@ class ECSService(HWSService):
         return response
 
     def stop_server(self, project_id, server_id):
-        uri = '/v1/%s/servers/%s/action' % (project_id, server_id)
+        uri = '/v2/%s/servers/%s/action' % (project_id, server_id)
         request_body_dict = {}
         request_body_dict['os-stop'] = {}
         request_body_string = json.dumps(request_body_dict)
@@ -286,7 +286,7 @@ class ECSService(HWSService):
 
 
     def start_server(self, project_id, server_id):
-        uri = '/v1/%s/servers/%s/action' % (project_id, server_id)
+        uri = '/v2/%s/servers/%s/action' % (project_id, server_id)
         request_body_dict = {"os-start": {}}
         request_body_string = json.dumps(request_body_dict)
         response = self.post(uri, request_body_string)
@@ -307,7 +307,7 @@ class ECSService(HWSService):
         :param type: string, "SOFT" or "HARD"
         :return:
         """
-        uri = '/v1/%s/servers/%s/action' % (project_id, server_id)
+        uri = '/v2/%s/servers/%s/action' % (project_id, server_id)
         request_body_dict = {
                                 "reboot": {
                                     "type": type
@@ -335,3 +335,9 @@ class ECSService(HWSService):
         response = self.delete(uri)
 
         return response
+
+    def get_volume_list(self, project_id, server_id):
+        uri = '/v2/%s/servers/%s/os-volume_attachments' % (project_id, server_id)
+        response = self.get(uri)
+        return response
+

@@ -967,10 +967,9 @@ class HwsComputeDriver(driver.ComputeDriver):
         cascaded_server_id = db_manager.get_cascaded_server_id(instance.uuid)
         if not cascaded_server_id:
             error_info = 'Not exist cascaded server in hwclouds for server: %s.' % instance.uuid
-
             raise Exception(error_info)
         if cascaded_volume:
-            job_detach_volume = self.hws_client.ecs.detach_volume(self.project, instance.uuid, cascaded_volume)
+            job_detach_volume = self.hws_client.ecs.detach_volume(self.project, cascaded_server_id, cascaded_volume)
             self._deal_with_job(job_detach_volume, self.project)
 
     def after_detach_volume_success(self, job_detail_info, **kwargs):

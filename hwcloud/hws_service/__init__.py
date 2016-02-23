@@ -3,6 +3,7 @@ __author__ = 'Administrator'
 from urlparse import urljoin
 import json
 import time
+from hwcloud import LOG
 
 from hwcloud.java_gateway import HWSRestMethod
 
@@ -13,10 +14,11 @@ def retry(times, interval):
             timer = 0
             while(True):
                 response = f(*args, **kwargs)
-                if response['status'] == 'error':
+                if not str(response['status']).startswith('20'):
                     if timer < times:
                         timer += 1
                         time.sleep(interval)
+                        LOG.debug('retry time: %s' % timer)
                         continue
                     else:
                         return response
@@ -25,10 +27,10 @@ def retry(times, interval):
         return __wrapper
     return _wrapper
 
-RETRY_TIMES = 3
+RETRY_TIMES = 10
 
 #interval seconds
-RETRY_INTERVAL = 1
+RETRY_INTERVAL = 0.5
 
 class HWSService(object):
     def __init__(self, ak, sk, service_name, region, protocol, host, port):

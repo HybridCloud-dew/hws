@@ -466,6 +466,7 @@ class HwsComputeDriver(driver.ComputeDriver):
             if job_status != 200:
                 job_info = json.dumps(created_job)
                 error_info = 'HWS Create Server Error, EXCEPTION: %s' % created_job
+                LOG.error(error_info)
                 raise Exception(error_info)
 
         except Exception:
@@ -919,8 +920,12 @@ class HwsComputeDriver(driver.ComputeDriver):
                 elif job_status_ac == "RUNNING":
                     LOG.debug('Job for delete server: %s is still RUNNING.' % cascading_server_id)
                     pass
+                elif job_status_ac == "INIT":
+                    LOG.debug('JOB for createing server: %s is init' % server_name)
+                    pass
                 else:
-                    raise Exception(job_current_info)
+                    LOG.debug('JOB status is %s' % job_status_ac)
+                    pass
             elif job_current_info and job_current_info['status'] == 'error':
                 try:
                     self._deal_java_error(job_current_info)

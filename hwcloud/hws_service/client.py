@@ -38,8 +38,8 @@ class HWSClient(object):
         self.vbs = VBSService(ak, sk, self.region, self.protocol, self.vbs_host, self.port)
 
 if __name__ == '__main__':
-    ak = 'FAVX6E6CN0SSJT0QV4PC'
-    sk = '9b3ULPelCtzF3UgwOaWar9ss4Wlge1Bc2r3obb0y'
+    ak = 'DQEDQVNGMIW7KZXWO1AX'
+    sk = 't4up1pD7KYs8Nj735aEcTQeYYJrnYjEQvO07L9Q0'
     region = 'cn-north-1'
     protocol = 'https'
     port = '443'
@@ -62,7 +62,9 @@ if __name__ == '__main__':
     # print job_detail
     volume_id = '9dfd0600-f822-48fa-b831-f43d97135ee5'
     backup_name = 'bk_1'
-    job_info = hws_client.vbs.create_backup(project_id, volume_id, backup_name)
-    print(job_info)
-    job_id = job_info['body']['job_id']
-    job_detail = hws_client.vbs.get_job_detail(project_id, job_id)
+    server_list = hws_client.ecs.list(project_id)
+    print server_list
+    # job_info = hws_client.vbs.create_backup(project_id, volume_id, backup_name)
+    # print(job_info)
+    # job_id = job_info['body']['job_id']
+    # job_detail = hws_client.vbs.get_job_detail(project_id, job_id)

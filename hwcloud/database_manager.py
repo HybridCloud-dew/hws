@@ -7,6 +7,7 @@ import traceback
 import time
 
 from hwcloud import LOG
+
 TIMES = 50
 INTERVAL = 0.1
 
@@ -454,6 +455,11 @@ if __name__ == '__main__':
             cascading_server_id = sys.argv[2]
             cascaded_server_id = sys.argv[3]
             database_manager.add_server_id_mapping(cascading_server_id, cascaded_server_id)
+    elif mode == 'delete_image_mapping':
+        if len(sys.argv) == 3:
+            cascading_image_id = sys.argv[2]
+            cascaded_image_id = database_manager.delete_image_id_mapping(cascading_image_id)
+            print('delete image mapping of cascading image: %s' % cascading_image_id)
     elif mode == '--help':
         print_option()
     else:
